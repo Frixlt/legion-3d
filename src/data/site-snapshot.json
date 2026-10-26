@@ -1,0 +1,42 @@
+{
+  "at": "2026-10-26",
+  "source": "https://play.multidonate.ru/c/…",
+  "scripts": ["/c/…/cityfair.js", "/c/…/doodle.js", "/c/…/questdungeon.js", "/c/…/questfoes.js", "/lib/game-data.js", "/lib/inventory.js", "/lib/site-chat.js", "/lib/site-ui.js", "/lib/ui-kit.js", "/lib/world.js", "/site/achievements.js", "/site/app.js", "/site/auction.js", "/site/campart.js", "/site/campmap.js", "/site/city.js", "/site/cityart.js", "/site/citygl.js", "/site/citymap.js", "/site/craftworld.js", "/site/itemgrid.js", "/site/lore.js", "/site/mine-art.js", "/site/mine-biome.js", "/site/mine.js", "/site/news.js", "/site/newssite.js", "/site/ore-art.js", "/site/pick-art.js", "/site/q/artkit.js", "/site/q/battle.js", "/site/q/battlecrowd.js", "/site/q/crowdcam.js", "/site/q/shelf.js", "/site/quest.js", "/site/shard-art.js", "/site/skills.js", "/site/townart.js", "/site/towngen.js", "/site/trade.js", "/site/worldmap.js"],
+  "buildings": ["anvil", "auction", "board", "forge", "gate", "hall", "magic", "mine", "mineboard", "shop", "storage", "tent", "trainer"],
+  "rooms": ["anvil", "auction", "board", "forge", "gate", "hall", "magic", "shop", "storage", "tent", "trainer"],
+  "catalog": {
+    "shapes": ["ball", "bean", "box", "cone", "egg", "ghost", "tall"],
+    "eyes": ["big", "cyclops", "dots", "happy", "jack", "stars", "void"],
+    "mouths": ["grin", "open", "tongue"],
+    "hats": ["antenna", "antenna2", "bandana", "batears", "beret", "bow", "bunny", "cap", "cat", "chef", "cowboy", "crown", "halo", "headphones", "horns", "laurel", "legion", "none", "party", "pumpkin", "reaper", "scarehat", "skull", "sprout", "tophat", "tuft", "witch", "wizard"],
+    "acc": ["bolts", "bowtie", "candybag", "cape", "cobweb", "fangs", "glasses", "monocle", "mustache", "pioneer", "scarf", "shades", "tie", "vampcape"],
+    "auras": ["bats", "frost", "gold", "halo", "haunt", "jackglow", "leaves", "shadow", "sparks", "wisps"],
+    "weapons": ["axe", "bow", "censer", "club", "crook", "dagger", "gladius", "grimoire", "hammer", "holymace", "kris", "mace", "pitchfork", "skullstaff", "spear", "staff", "sword"],
+    "shields": ["barrel", "buckler", "round", "scutum"],
+    "armors": ["leather", "lorica", "plate", "robe", "shroud"],
+    "rarities": ["common", "epic", "legendary", "rare", "uncommon"]
+  },
+  "gameData": {
+    "classes": ["archer", "legionary", "mage", "necromancer", "paladin", "priest", "rogue"],
+    "res": ["adamant", "amber", "aquamarine", "basalt", "black_lotus", "black_pearl", "blight_herbs", "bone_dust", "cedar", "clay", "coal", "copper", "crown", "crystal", "emerald", "fire_opal", "fish", "fish_oil", "flax", "frost_stone", "furs", "glass", "gold", "golden_wheat", "grain", "heartwood", "herbs", "honey", "ice_amber", "ice_fish", "iron", "limestone", "malachite", "moonflower", "morion", "moss", "mushrooms", "oak", "obsidian", "pearl", "peat", "pine", "poison_root", "relic", "resin", "rubble", "ruby", "runestone", "salt", "sandstone", "sapphire", "scarab", "seal_hide", "seeds", "shells", "silver", "spiritwood", "statue_shard", "stone", "sulfur", "topaz", "walrus_tusk", "witch_bloom", "wood", "wool"],
+    "xstats.keys": ["crit", "critDmg", "dodge", "healPow", "luck", "pierce", "resist"]
+  },
+  "api": ["/api/ach", "/api/achPick", "/api/aucBuy", "/api/aucCancel", "/api/aucClaim", "/api/aucSell", "/api/auction", "/api/buymat", "/api/channels", "/api/city/chat", "/api/city/enter", "/api/city/go", "/api/city/leave", "/api/city/ping", "/api/city/say", "/api/city/state", "/api/city/stock", "/api/city/towns", "/api/city/trade", "/api/cityBuy", "/api/craft", "/api/enchant", "/api/equip", "/api/journal", "/api/legion", "/api/live", "/api/lore", "/api/me", "/api/mine/chat", "/api/mine/chat/say", "/api/mine/enter", "/api/mine/go", "/api/mine/hall", "/api/mine/leave", "/api/mine/ping", "/api/mine/state", "/api/mineBuy", "/api/mineClaim", "/api/mineDig", "/api/mineLamp", "/api/mineOreBag", "/api/minePick", "/api/mineSeen", "/api/mineSell", "/api/mineStop", "/api/news", "/api/news/comments/delete", "/api/news/comments/like", "/api/news/head", "/api/news/like", "/api/news/my", "/api/news/replies/seen", "/api/qact", "/api/qsay", "/api/qvote", "/api/repair", "/api/skill", "/api/skillReset", "/api/skills", "/api/soc", "/api/stExpand", "/api/stOrder", "/api/stPut", "/api/stPutAll", "/api/stSort", "/api/stTake", "/api/stTakeAll", "/api/streamer", "/api/tentShop", "/api/unequip", "/api/use", "/api/wear", "/api/world"],
+  "questKinds": ["battle", "boss", "bossgen", "dungeon", "event", "gather", "lair", "map", "rest", "shop", "town", "trap", "travel", "treasure"],
+  "buildingFlags": {
+    "hall": ["soon"],
+    "auction": ["soon"],
+    "mine": ["mine"],
+    "mineboard": ["mine"],
+    "storage": ["soon"],
+    "anvil": ["fair"],
+    "forge": ["fair"],
+    "gate": ["fair"],
+    "tent": ["fair"],
+    "shop": ["fair"],
+    "magic": ["magic", "fair"]
+  },
+  "fullRooms": ["forge", "magic", "shop", "tent"],
+  "gameDataVersion": "b759f4e45280",
+  "maxLevel": 50
+}

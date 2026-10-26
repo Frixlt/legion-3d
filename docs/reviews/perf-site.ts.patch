@@ -1,0 +1,89 @@
+--- a/src/net/site.ts
++++ b/src/net/site.ts
+@@ -109,7 +109,9 @@
+ const safe = <T,>(f: () => T, d: T): T => { try { return f(); } catch { return d; } };
+ 
+ /* ------------------------------------------------------------------ walker simulation */
+-interface Sim extends Walker { path: [number, number][] | null; lag: number; raw: any; vx: number; vy: number }
++interface Sim extends Walker { path: [number, number][] | null; lag: number; raw: any; vx: number; vy: number; lookKey: string }
++/** Look-relevant fields of a walker record, as one string (computed once per update, compared to the cached one). */
++const lookKeyOf = (e: any) => JSON.stringify([e.lk, e.g, e.gh, e.n, e.lv]);
+ const CHAT_KIND = (m: any): ChatMsg['kind'] => (m.sys ? 'sys' : m.ev ? 'ev' : m.k === 'tr' ? 'tr' : m.k === 'dm' ? 'dm' : 'g');
+ const toChat = (m: any): ChatMsg => ({ id: String(m.id), login: String(m.l || ''), name: String(m.n || m.l || ''), text: String(m.t || ''), at: +m.at || Date.now(), kind: CHAT_KIND(m), role: m.c, roleName: m.cn, to: m.to });
+ const faceOf = (dx: number, dy: number) => Math.atan2(-(dx * SX), -(dy * SZ));
+@@ -172,11 +174,13 @@
+   const myLogin = String(me.user.login).toLowerCase();
+   const M = W.LGCityMap;
+   const siteMap = () => safe(() => (mapRef && M && (mapRef as any)) || null, null);
++  // LGCityMap.follow wants the site map object (path/free/clear). Our layout wraps those functions — enough for follow().
++  // One wrapper per layout (was: three closures + an object per move message).
++  let mapLikeOf: CityLayout | null = null, mapLike: { path: (a: any, b: any) => any; free: (x: number, y: number) => boolean; clear: (a: any, b: any) => boolean } | null = null;
+   const follow = (w: Sim, fx: number, fy: number, tx: number, ty: number, ago: number, fresh: boolean) => {
+     const L = siteMap();
+     if (!L || !M?.follow || !L.path) { w.x = tx; w.y = ty; w.path = null; return; }
+-    // LGCityMap.follow wants the site map object (path/free/clear). Our layout wraps those functions — enough for follow().
+-    const mapLike = { path: (a: any, b: any) => L.path!(a, b), free: (x: number, y: number) => L.free(x, y), clear: (a: any, b: any) => clearLine(L, a, b) };
++    if (mapLikeOf !== L || !mapLike) { mapLikeOf = L; mapLike = { path: (a, b) => L.path!(a, b), free: (x, y) => L.free(x, y), clear: (a, b) => clearLine(L, a, b) }; }
+     try {
+       const r = M.follow(mapLike, [w.x, w.y], [fx, fy], [tx, ty], ago, { fresh });
+       w.x = r.x; w.y = r.y; w.path = r.path; w.lag = r.lag;
+@@ -188,10 +192,11 @@
+     let w = sims.get(l), fresh = false;
+     if (!w) {
+       const [nx, ny] = mapRef ? mapRef.nearest(+e.x || 0, +e.y || 0) : [+e.x || 0, +e.y || 0];
+-      w = { login: l, app: appearanceFn(l, e, styleId()), x: nx, y: ny, face: 0, speed: 0, alpha: 0, path: null, lag: 0, raw: e, vx: 0, vy: 0 };
++      w = { login: l, app: appearanceFn(l, e, styleId()), x: nx, y: ny, face: 0, speed: 0, alpha: 0, path: null, lag: 0, raw: e, vx: 0, vy: 0, lookKey: lookKeyOf(e) };
+       sims.set(l, w); fresh = true; store.emit('walkers');
+-    } else if (JSON.stringify([e.lk, e.g, e.gh, e.n, e.lv]) !== JSON.stringify([w.raw.lk, w.raw.g, w.raw.gh, w.raw.n, w.raw.lv])) {
+-      w.raw = e; w.app = appearanceFn(l, e, styleId()); store.emit('walkers');
++    } else {
++      const k = lookKeyOf(e);   // one stringify per update (was two)
++      if (k !== w.lookKey) { w.lookKey = k; w.raw = e; w.app = appearanceFn(l, e, styleId()); store.emit('walkers'); }
+     }
+     follow(w, +e.x, +e.y, +(e.tx ?? e.x), +(e.ty ?? e.y), +e.dt || 0, fresh);
+   };
+@@ -216,7 +221,9 @@
+     }
+     if (Array.isArray(d.chatDel)) {
+       store.deleteChat(d.chatDel.map(String));
+-      for (const w of [store.me, ...sims.values()]) if (w?.bubble && d.chatDel.includes(w.bubble.id)) w.bubble = undefined;
++      const del = d.chatDel as unknown[];
++      const me0 = store.me; if (me0?.bubble && del.includes(me0.bubble.id)) me0.bubble = undefined;
++      for (const w of sims.values()) if (w.bubble && del.includes(w.bubble.id)) w.bubble = undefined;
+     }
+   };
+   const onEnter = (r: any) => {
+@@ -235,6 +242,15 @@
+   const startPos = safe(() => W.LGCity.debug()?.me as [number, number] | undefined, undefined);
+   store.setMe({ login: myLogin, app: heroApp(me.hero), x: startPos ? startPos[0] : ((mapRef as CityLayout | null)?.QW ?? 1800) + 660, y: startPos ? startPos[1] : 1010, face: 0, speed: 0, alpha: 1, me: true });
+ 
++  // Our own look: replace store.me.app (and wake the 'walkers' listeners) only when it really changed —
++  // the hero arrives on every 'me' SSE event (coins, hp…), most of them do not touch the look.
++  let meAppKey = store.me ? JSON.stringify(store.me.app) : '';
++  const setMeApp = (app: Appearance) => {
++    if (!store.me) return;
++    const k = JSON.stringify(app); if (k === meAppKey) return;
++    meAppKey = k; store.me.app = app; store.emit('walkers');
++  };
++
+   const unsubs: (() => void)[] = [];
+   if (B) {
+     unsubs.push(B.on('sse:city', (d) => applyBatch(d)));
+@@ -243,7 +259,7 @@
+     const onHero = (d: any) => {
+       const h = d && (d.hero || (d.login ? d : null)); if (!h) return;
+       store.setHero(h);
+-      if (store.me) { store.me.app = heroApp(h); store.emit('walkers'); }
++      setMeApp(heroApp(h));
+       refreshLayout();
+     };
+     unsubs.push(B.on('sse:me', onHero));
+@@ -331,7 +347,7 @@
+   };
+   async function post(p: string, b: unknown): Promise<ApiResult> {
+     const r = await api<ApiResult>(p, b);
+-    if (r && r.ok && r.hero) { store.setHero(r.hero); if (store.me) { store.me.app = heroApp(r.hero); store.emit('walkers'); } }
++    if (r && r.ok && r.hero) { store.setHero(r.hero); setMeApp(heroApp(r.hero)); }
+     return r || { ok: false, error: 'нет ответа' };
+   }
+ 

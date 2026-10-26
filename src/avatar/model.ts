@@ -1,0 +1,335 @@
+/**
+ * Character model builder: one skinned, vertex-coloured geometry per appearance key (shared by every avatar
+ * that looks the same), a face decal patch, and the aura effect. Bones are created per avatar.
+ *
+ * Model space: feet on y = 0, the character LOOKS TOWARDS −Z, its right hand is at +X.
+ */
+import * as THREE from 'three';
+import type { Appearance } from '../contracts';
+import { RARITY_COLOR, nickExtras } from './appearance';
+import { setDetail, Parts, T, mul, bodyDims, bodyShell, radiusAt, sectionXZ, col, sphere, cyl, cone, capsule, torus, star, slab, tube, INK, type BodyDims, type Skin } from './geom';
+import { addHat, addAccessories } from './hats';
+import { addWeapon, addShield, weaponHold } from './gear';
+
+/** Third-person forward tilt of the weapon hand (rx; default −0.65 = tip up-forward). */
+const TP_TILT: Record<string, number> = { censer: 0, bow: -0.12, staff: -0.25, crook: -0.25, skullstaff: -0.25, spear: -0.9, pitchfork: -0.9, grimoire: -0.2 };
+import { addArmor, armorBase, SHROUD, W_CLOTH, RANK } from './armor';
+
+export const enum B { root = 0, body = 1, armL = 2, armR = 3, legL = 4, legR = 5, tail1 = 6, tail2 = 7, cape1 = 8, cape2 = 9 }
+export const BONE_COUNT = 10;
+export const BONE_PARENT = [-1, 0, 1, 1, 0, 0, 1, 6, 1, 8];
+
+export interface Rig {
+  /** Rest positions of the bones in model space. */
+  rest: THREE.Vector3[];
+  /** Local hand points (in arm bone space) */
+  handL: THREE.Vector3; handR: THREE.Vector3;
+}
+
+export interface ModelData {
+  key: string;
+  geo: THREE.BufferGeometry;          // skinned (skinIndex/skinWeight)
+  mid: THREE.BufferGeometry;          // LOD 1: same rig, ~half the segments
+  low: THREE.BufferGeometry;          // LOD 2: static low mesh (no skin)
+  rig: Rig;
+  dims: BodyDims;
+  headTop: number;                    // m, incl. hat
+  faceKey: string;
+  hasLegs: boolean; hasTail: boolean; hasCape: boolean;
+  radius: number;
+  refs: number;
+}
+
+const W_GEM: Record<string, string> = { gold: '#ffd76a', sparks: '#fff0a8', halo: '#ffe27a', shadow: '#a24bff', frost: '#8fd4ff', plain: '#d9a441' };
+const STRIPE_MUL = 0.72;
+
+/** Hat actually drawn: own look hat; when none, the worn helmet (class hats, miner…). */
+export function hatOf(app: Appearance): { id: string; rar?: string } {
+  const h = app.look.hat || 'none';
+  if (h !== 'none') return { id: h };
+  if (app.gear.h) return { id: app.gear.h, rar: app.gear.hr };
+  return { id: 'none' };
+}
+
+export function modelKey(app: Appearance): string {
+  const l = app.look, g = app.gear, ex = nickExtras(app.login, app.styleId), hat = hatOf(app);
+  return [app.styleId, l.shape, Math.round(ex.w01 * 4), ex.pat, l.color, l.color2, hat.id, hat.rar || '', (l.acc || []).slice().sort().join('+'),
+    l.accColor, l.capeColor, g.a || '', g.ar || '', g.am || '', g.w || '', g.wr || '', g.s || '', g.sr || '', g.t || '', g.tr || '', app.ghost ? 1 : 0].join('|');
+}
+
+const cache = new Map<string, ModelData>();
+export function getModel(app: Appearance): ModelData {
+  const key = modelKey(app);
+  let m = cache.get(key);
+  if (!m) {
+    m = buildModel(app, key);
+    setDetail(0.5);
+    try { const m2 = buildModel(app, key); m.mid = m2.geo; m2.low.dispose(); } finally { setDetail(1); }
+    cache.set(key, m);
+  }
+  m.refs++;
+  return m;
+}
+export function releaseModel(m: ModelData) {
+  m.refs--;
+  if (m.refs <= 0 && cache.size > 64) {   // keep a warm cache; evict only when large
+    cache.delete(m.key); m.geo.dispose(); m.mid.dispose(); m.low.dispose();
+  }
+}
+
+/* ------------------------------------------------------------------ build */
+
+function buildModel(app: Appearance, key: string): ModelData {
+  const l = app.look, g = app.gear, style = String(app.styleId || 'legion');
+  const ex = nickExtras(app.login, app.styleId);
+  const d = bodyDims(String(l.shape), Math.round(ex.w01 * 4) / 4);
+  const cat = style === 'cats', monkey = style === 'monkeys' || style === 'ugabugi';
+  const c1 = l.color || '#f2a65a', c2 = l.color2 || '#4aa3ff';
+  const C1 = col(c1), C2 = col(c2);
+  const p = new Parts();
+  const tmp = new THREE.Color(), light = new THREE.Color('#ffffff');
+  const pat = cat ? ex.pat : 0;
+
+  /* ---- bones (rest) ---- */
+  const neckY = d.mouthY - 0.105;
+  const sx = radiusAt(d, d.armY) * 0.97;
+  const legX = Math.min(radiusAt(d, d.y0 + 0.08) * 0.5, 0.13);
+  const backZ = radiusAt(d, d.y0 + 0.15) * d.depth;
+  const rest: THREE.Vector3[] = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, d.y0, 0),
+    new THREE.Vector3(-sx, d.armY, 0), new THREE.Vector3(sx, d.armY, 0),
+    new THREE.Vector3(-legX, d.y0 + 0.04, 0), new THREE.Vector3(legX, d.y0 + 0.04, 0),
+    new THREE.Vector3(0, d.y0 + 0.13, backZ * 0.9), new THREE.Vector3(0, d.y0 + 0.36, backZ * 0.9 + 0.17),
+    new THREE.Vector3(0, neckY, radiusAt(d, neckY) * d.depth * 0.9), new THREE.Vector3(0, (neckY + 0.02) / 2, radiusAt(d, neckY) * d.depth + 0.12),
+  ];
+
+  /* ---- body ---- */
+  p.bone = B.body;
+  const ghostShape = d.shape === 'ghost';
+  p.add(bodyShell(d, {
+    yA: d.y0, yB: d.top, segs: 32, rings: 24,
+    yWarp: ghostShape ? (th, y, t) => (t === 0 ? y - 0.035 * (0.5 + 0.5 * Math.cos(th * 4)) : y) : undefined,
+    color: (th, y, t, out) => {
+      out.copy(C1);
+      const front = Math.cos(th);
+      if ((pat === 2 || pat === 4) && front > 0.45 && y < d.armY - 0.02 && y > d.y0 + 0.04) out.lerp(light, 0.5);
+      if ((pat === 1 || pat === 4) && front < 0.3) { const s = Math.sin((y - d.y0) * 55); if (s > 0.55) out.multiplyScalar(STRIPE_MUL); }
+      if (pat === 1 || pat === 4) { if (y > d.top - 0.07 && Math.abs(Math.sin(th)) < 0.12 && Math.abs(th) < 1) out.multiplyScalar(STRIPE_MUL); }
+      if (pat === 3 && th < -0.25 && th > -0.95 && Math.abs(y - d.eyeY) < 0.07) out.multiplyScalar(STRIPE_MUL);
+      if (t < 0.03 && !ghostShape) out.multiplyScalar(0.92);
+    },
+  }));
+  if (!ghostShape) p.add(new THREE.CircleGeometry(radiusAt(d, d.y0 + 0.004), 24), c1, T(0, d.y0 + 0.001, 0, Math.PI / 2, 0, 0, [1, d.depth, 1]));
+  else p.add(new THREE.CircleGeometry(radiusAt(d, d.y0 + 0.004), 24), tmp.copy(C1).multiplyScalar(0.8), T(0, d.y0 - 0.01, 0, Math.PI / 2, 0, 0, [1, d.depth, 1]));
+
+  /* ---- ears ---- */
+  const hat = hatOf(app);
+  const earY = d.top - (d.shape === 'box' ? 0.0 : 0.05);
+  const er = radiusAt(d, earY);
+  if (cat) {
+    for (const s of [-1, 1]) {
+      const m = T(s * er * 0.66, earY + 0.07, 0, 0, Math.PI / 4, s * -0.3, [1, 1, 0.5]);
+      p.add(cone(0.088, 0.18, 4), c1, m);
+      p.add(cone(0.058, 0.125, 4), '#ff8fa3', T(s * er * 0.64, earY + 0.06, -0.025, 0, Math.PI / 4, s * -0.3, [1, 1, 0.3]));
+    }
+  } else if (monkey) {
+    const ey = d.eyeY + 0.01, r = radiusAt(d, ey);
+    for (const s of [-1, 1]) {
+      p.add(sphere(0.075, 12, 8), c1, T(s * (r + 0.035), ey, 0.0, 0, 0, 0, [0.45, 1, 1]));
+      p.add(sphere(0.052, 10, 6), '#ffe4c4', T(s * (r + 0.05), ey, -0.008, 0, 0, 0, [0.3, 1, 1]));
+    }
+  }
+
+  /* ---- armor ---- */
+  const rk = RANK[g.ar || 'common'] || 0, rc = g.ar && g.ar !== 'common' ? RARITY_COLOR[g.ar] : null;
+  let armorShell: { yA: number; yB: number; off: number } | null = null;
+  if (g.a) armorShell = addArmor(p, d, g.a, g.ar, g.am, { yB: neckY, sx, ghost: ghostShape, boneL: B.armL, boneR: B.armR });
+  // amulet
+  if (g.t) {
+    const gy = neckY - 0.06, zf = -radiusAt(d, gy) * d.depth - 0.018;
+    p.add(new THREE.OctahedronGeometry(0.026, 0), W_GEM[g.t] || W_GEM.plain, T(0, gy, zf, 0, 0, 0, [1, 1.3, 0.6]));
+    p.add(torus(radiusAt(d, neckY) * 0.95, 0.005, 3, 18), '#d9a441', T(0, neckY + 0.005, 0, Math.PI / 2 + 0.25, 0, 0, [1, d.depth, 1]));
+  }
+
+  /* ---- hat & accessories ---- */
+  const acc = (l.acc || []).map(String);
+  const hatH = addHat(p, hat.id, { d, c1, c2, rar: hat.rar, style });
+  addAccessories(p, acc, { d, accColor: l.accColor || c2, cyc: l.eyes === 'cyclops', eyes: String(l.eyes || 'dots'), shell: armorShell });
+
+  /* ---- arms & paws ---- */
+  const armLen = d.shape === 'ball' ? 0.15 : 0.175;
+  const handL = new THREE.Vector3(-0.085, -armLen, -0.03), handR = new THREE.Vector3(0.085, -armLen, -0.03);
+  const sleeve = g.a && g.a !== 'robe' && g.a !== 'shroud' ? null : g.a ? (g.a === 'robe' ? W_CLOTH[g.ar || 'common'] : SHROUD[rk]) : null;
+  for (const s of [-1, 1]) {
+    const bone = s < 0 ? B.armL : B.armR, r = rest[bone], hand = s < 0 ? handL : handR;
+    p.bone = bone;
+    const lim = tube([[r.x - s * 0.02, r.y + 0.01, r.z], [r.x + s * 0.06, r.y - armLen * 0.45, r.z - 0.015], [r.x + hand.x, r.y + hand.y + 0.035, r.z + hand.z]], 0.032, 8, 7);
+    p.add(lim, sleeve || c1);
+    p.add(sphere(0.05, 12, 8), c1, T(r.x + hand.x, r.y + hand.y, r.z + hand.z, 0, 0, 0, [1, 0.95, 1]));
+    if (cat) for (const k of [-1, 1]) p.add(sphere(0.012, 5, 4), '#ff8fa3', T(r.x + hand.x + k * 0.016, r.y + hand.y - 0.03, r.z + hand.z - 0.035));
+  }
+  /* ---- weapon & shield ---- */
+  if (g.w) {
+    const r = rest[B.armR];
+    // hand pose (tip up-forward; staffs nearly upright; spears levelled forward; bow upright; censer hanging), then the
+    // canonical hold (gear.ts weaponHold: edge / head forward, bow string and grimoire cover towards the holder)
+    const w = g.w, tilt = TP_TILT[w] ?? -0.65;
+    const m = new THREE.Matrix4().multiplyMatrices(T(r.x + handR.x, r.y + handR.y, r.z + handR.z, tilt, 0, w === 'censer' ? 0 : -0.15), weaponHold(w));
+    p.bone = B.armR;
+    addWeapon(p, w, g.wr, m);
+  }
+  if (g.s) {
+    const r = rest[B.armL];
+    p.bone = B.armL;
+    // held on the forearm, facing front-left; kept forward of the body sides so it never cuts through a cape
+    addShield(p, g.s, g.sr, T(r.x + handL.x - 0.045, r.y + handL.y + 0.06, r.z + handL.z - 0.075, 0, 0.45, 0.05));
+  }
+
+  /* ---- legs ---- */
+  const hasLegs = !ghostShape;
+  if (hasLegs) {
+    for (const s of [-1, 1]) {
+      const bone = s < 0 ? B.legL : B.legR, r = rest[bone];
+      p.bone = bone;
+      p.add(cyl(0.048, 0.052, r.y - 0.02, 8), c1, T(r.x, (r.y + 0.02) / 2, r.z));
+      p.add(sphere(0.064, 12, 8), c1, T(r.x, 0.038, r.z - 0.028, 0, 0, 0, [1, 0.62, 1.38]));
+      if (cat) for (const k of [-1, 0, 1]) p.add(sphere(0.012, 5, 4), '#ff8fa3', T(r.x + k * 0.022, 0.012, r.z - 0.09));
+    }
+  }
+
+  /* ---- capes (computed first: the tail routes around a cape) ---- */
+  const capeCol = acc.includes('cape') ? (l.capeColor || '#c0182b') : acc.includes('pioneer') ? '#35507a' : null;
+  const hasCape = !!capeCol;
+  const hasTail = cat || monkey;
+  const t0 = rest[B.tail1], t1 = rest[B.tail2];
+  const tailBack = hasCape ? 0.07 : 0;   // with a cape the tail rises a little further back, clear of the cloth
+
+  /* ---- tail ---- */
+  if (hasTail) {
+    const tr = monkey ? 0.032 : 0.042, taper = 0.14;
+    const zb = t0.z + tailBack;
+    const pts: [number, number, number][] = monkey
+      ? [[0, t0.y + 0.01, t0.z - 0.09], [0, t0.y, t0.z + 0.02], [0.02, t0.y - 0.01, zb + 0.12], [0.05, t0.y + 0.1, zb + 0.25], [0.05, t0.y + 0.3, zb + 0.26], [0.04, t0.y + 0.38, zb + 0.15], [0.03, t0.y + 0.3, zb + 0.1]]
+      : [[0, t0.y + 0.01, t0.z - 0.09], [0, t0.y, t0.z + 0.02], [0.03, t0.y + 0.015, zb + 0.12], [0.06, t0.y + 0.15, zb + 0.2], [0.06, t0.y + 0.3, zb + 0.16], [0.09, t0.y + 0.36, zb + 0.2]];
+    const skin: Skin = (_x, y, z) => {
+      if (z < t0.z - 0.01) return [B.tail1, B.tail1, 1];
+      const w = Math.min(1, Math.max(0, (y - t0.y) / (t1.y - t0.y))); return [B.tail1, B.tail2, 1 - w];
+    };
+    const tg = tube(pts, tr, 22, 9, taper);
+    const tipC = new THREE.Color().copy(C1);
+    if (pat === 1 || pat === 4) {
+      const perRing = tg.attributes.position.count / ((tg as THREE.TubeGeometry).parameters.tubularSegments + 1);
+      const cAttr = new Float32Array(tg.attributes.position.count * 3), stripe = new THREE.Color().copy(C1).multiplyScalar(STRIPE_MUL);
+      const rings = (tg as THREE.TubeGeometry).parameters.tubularSegments + 1;
+      for (let i = 0; i < tg.attributes.position.count; i++) {
+        const ring = Math.floor(i / perRing), t = ring / (rings - 1);
+        // stripes only on the visible part (outside the body), 3 rings dark / 3 light, last ring = tip colour
+        const c = t > 0.25 && Math.floor(ring / 3) % 2 === 1 ? stripe : C1;
+        cAttr[i * 3] = c.r; cAttr[i * 3 + 1] = c.g; cAttr[i * 3 + 2] = c.b;
+        if (ring === rings - 1) tipC.copy(c);
+      }
+      tg.setAttribute('color', new THREE.BufferAttribute(cAttr, 3));
+      p.add(tg, undefined, undefined, skin);
+    } else p.add(tg, c1, undefined, skin);
+    // rounded tip (the tube is open) and a soft joint where the tail leaves the body (static, on the body bone)
+    const e = pts[pts.length - 1];
+    p.add(sphere(tr * (1 - taper), 10, 7), tipC, T(e[0], e[1], e[2]), skin);
+    const jy = t0.y + 0.005, jz = radiusAt(d, jy) * d.depth;
+    p.add(sphere(tr * 1.35, 12, 8), c1, T(0, jy, jz - 0.012, 0, 0, 0, [1, 1, 0.8]), B.body);
+  }
+
+  /* ---- cape: two layers (outer colour, darker lining) + a rim, so it has thickness and never z-fights ---- */
+  if (capeCol) {
+    const pioneer = !acc.includes('cape');
+    const yTop = neckY + 0.02, yBot = hasTail ? t0.y + 0.1 : 0.06;
+    const armorOff = g.a ? 0.014 : 0;
+    const TH = 0.014;                     // cloth thickness
+    const segs = 16, rings = 12;
+    const thA = Math.PI / 2 + 0.45, thB = Math.PI * 1.5 - 0.45;   // the back, through θ = π (+Z); sides left free for arms/shield
+    const rArm = radiusAt(d, d.armY) * 0.95;
+    const pt = { x: 0, z: 0 };
+    const capePt = (i: number, j: number, inset: number, out: number[]) => {
+      const t = j / rings, y = yTop + (yBot - yTop) * t;
+      const a = thA + ((thB - thA) * i) / segs;
+      // hugs the body (and armour) at the top, flares a little towards the hem; never closer than the shoulders
+      const r = Math.max(radiusAt(d, Math.max(y, d.y0 + 0.02)), rArm * (0.9 + 0.1 * t)) * (1 + 0.1 * t) + 0.026 + armorOff - inset;
+      sectionXZ(d, r, a, pt);
+      const spread = 1 + t * 0.22 * (pioneer ? 1.1 : 1);
+      const hem = t === 1 && pioneer ? 0.02 * Math.cos(i * 1.4) : 0;
+      out.push(pt.x * spread, y + hem, pt.z + t * 0.05);
+    };
+    const grid = (inset: number, flip: boolean) => {
+      const pos: number[] = [], idx: number[] = [];
+      for (let j = 0; j <= rings; j++) for (let i = 0; i <= segs; i++) capePt(i, j, inset, pos);
+      for (let j = 0; j < rings; j++) for (let i = 0; i < segs; i++) {
+        const a = j * (segs + 1) + i, b = a + 1, c = a + segs + 1, e = c + 1;
+        if (flip) idx.push(a, c, b, b, c, e); else idx.push(a, b, c, b, e, c);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      return geo;
+    };
+    // rim: a strip joining outer and inner along both sides and the hem
+    const rim = () => {
+      const pos: number[] = [], idx: number[] = [];
+      const edge: [number, number][] = [];
+      for (let j = 0; j <= rings; j++) edge.push([0, j]);
+      for (let i = 1; i <= segs; i++) edge.push([i, rings]);
+      for (let j = rings - 1; j >= 0; j--) edge.push([segs, j]);
+      for (const [i, j] of edge) { capePt(i, j, 0, pos); capePt(i, j, TH, pos); }
+      for (let k = 0; k < edge.length - 1; k++) { const a = k * 2, b = a + 1, c = a + 2, e = a + 3; idx.push(a, b, c, b, e, c); }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      return geo;
+    };
+    const skin: Skin = (_x, y) => { const w = Math.min(1, Math.max(0, (yTop - y) / (yTop - yBot))); return [B.cape1, B.cape2, 1 - Math.min(1, w * 1.3)]; };
+    const outerC = col(capeCol), innerC = new THREE.Color().copy(pioneer ? col('#9fc4ea') : outerC).multiplyScalar(pioneer ? 0.85 : 0.68);
+    const rimC = new THREE.Color().copy(outerC).multiplyScalar(0.8);
+    const outer = grid(0, false), inner = grid(TH, true), edge = rim();
+    // the rim is a thin strip seen from both sides: add it with both windings (cheap, no orientation guesswork)
+    const edge2 = edge.clone(); { const ix = Array.from(edge2.index!.array); for (let q = 0; q < ix.length; q += 3) { const t = ix[q + 1]; ix[q + 1] = ix[q + 2]; ix[q + 2] = t; } edge2.setIndex(ix); edge2.computeVertexNormals(); }
+    p.add(outer, outerC, undefined, skin);
+    p.add(inner, innerC, undefined, skin);
+    p.add(edge, rimC, undefined, skin);
+    p.add(edge2, rimC, undefined, skin);
+    // collar: a rolled edge along the top of the cape, wrapping to the front, with clasps
+    const cpts: [number, number, number][] = [];
+    const rc = radiusAt(d, yTop) + 0.02 + armorOff;
+    for (let i = 0; i <= 12; i++) { const a = Math.PI / 2 - 0.35 + ((Math.PI + 0.7) * i) / 12; sectionXZ(d, rc, a, pt); cpts.push([pt.x, yTop + 0.004, pt.z]); }
+    p.add(tube(cpts, 0.016, 24, 6), pioneer ? '#cfe8ff' : '#ffc94d', undefined, B.body);
+    for (const s of [-1, 1]) {
+      const a = s > 0 ? Math.PI / 2 - 0.35 : -(Math.PI / 2 - 0.35); sectionXZ(d, rc + 0.01, a, pt);
+      if (pioneer) p.add(star(0.03, 0.012), '#ffd36b', T(pt.x, yTop - 0.005, pt.z, 0, s * 0.9, 0), B.body);
+      else p.add(sphere(0.026, 10, 7), '#ffc94d', T(pt.x, yTop, pt.z, 0, 0, 0, [1, 1, 0.7]), B.body);
+    }
+  }
+
+  const geo = p.build(true);
+  geo.computeBoundingSphere();
+
+  /* ---- LOD2: static low mesh ---- */
+  const q = new Parts();
+  q.add(bodyShell(d, { yA: d.y0, yB: d.top, segs: 12, rings: 8, color: (_t, _y, _tt, out) => out.copy(C1) }));
+  if (hasLegs) for (const s of [-1, 1]) q.add(sphere(0.07, 6, 4), c1, T(s * legX, 0.05, -0.02, 0, 0, 0, [1, 0.8, 1.3]));
+  for (const s of [-1, 1]) q.add(sphere(0.055, 6, 4), c1, T(s * (sx + 0.05), d.armY - armLen, -0.02));
+  if (cat) for (const s of [-1, 1]) q.add(cone(0.075, 0.16, 4), c1, T(s * er * 0.66, earY + 0.06, 0, 0, Math.PI / 4, s * -0.32, [1, 1, 0.5]));
+  if (hat.id !== 'none' && hatH > 0.05) q.add(cyl(radiusAt(d, d.top - 0.08) * 0.8, radiusAt(d, d.top - 0.08) * 0.9, Math.min(0.2, hatH), 8), hat.id === 'miner' ? '#ffcf3a' : c2, T(0, d.top - 0.02 + Math.min(0.2, hatH) / 2, 0));
+  if (g.a) q.add(bodyShell(d, { yA: Math.max(d.y0, neckY - 0.42), yB: neckY, segs: 12, rings: 3, off: 0.01, color: (_t, _y, _tt, out) => out.set(armorBase(g.a === 'lorica' && g.am === 'light' ? 'light' : g.a!, g.ar)) }));
+  if (capeCol) q.add(cyl(0.2, 0.32, neckY, 8, true), capeCol, T(0, neckY / 2, 0.08, 0, 0, 0, [1, 1, 0.5]));
+  // eyes (two dark dots) and the tail keep the far silhouette readable
+  { const ez = -radiusAt(d, d.eyeY) * d.depth * 0.97, exx = d.ex * 1.25;
+    for (const s of l.eyes === 'cyclops' ? [0] : [-1, 1]) q.add(sphere(0.034, 5, 3), app.ghost ? '#1d2a4a' : INK, T(s * exx, d.eyeY, ez + 0.01, 0, 0, 0, [1, 1.15, 0.5])); }
+  if (hasTail) { const t0 = rest[B.tail1]; q.add(tube([[0, t0.y, t0.z - 0.03], [0.04, t0.y + 0.08, t0.z + 0.17], [0.07, t0.y + 0.32, t0.z + 0.17]], monkey ? 0.032 : 0.042, 4, 4), c1); }
+  const low = q.build(false);
+  low.computeBoundingSphere();
+
+  const faceKey = [l.eyes, l.mouth, l.blush ? 1 : 0, ex.iris, style, d.narrow ? 1 : 0, app.ghost ? 1 : 0].join('|');
+  return {
+    key, geo, mid: geo, low, rig: { rest, handL, handR }, dims: d, headTop: d.top + Math.max(0, hatH) + (cat && hatH < 0.12 ? 0.1 : 0),
+    faceKey, hasLegs, hasTail, hasCape, radius: Math.max(0.9, geo.boundingSphere!.radius + 0.4), refs: 0,
+  };
+}
+
+export function clearModelCache() { for (const m of cache.values()) { m.geo.dispose(); m.mid.dispose(); m.low.dispose(); } cache.clear(); }
+void slab; void capsule;

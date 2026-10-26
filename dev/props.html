@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Legion 3D · props showcase</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #14112a; overflow: hidden; color: #f3ecff; }
+  #app { position: fixed; inset: 0; }
+  #hud { position: fixed; left: 10px; top: 8px; white-space: pre; background: rgba(20, 16, 42, .55); padding: 6px 9px;
+         border-radius: 8px; pointer-events: none; font: 10px/1.35 ui-monospace, monospace; display: none; }
+  body.stats #hud { display: block; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"></div>
+<script>if (/stats=1/.test(location.search)) document.body.classList.add('stats');</script>
+<script src="props.js"></script>
+</body>
+</html>

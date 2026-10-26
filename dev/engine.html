@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Legion 3D · engine dev</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #14112a; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; color: #f3ecff; }
+  #app { position: fixed; inset: 0; }
+  #hud { position: fixed; left: 12px; top: 10px; white-space: pre; background: rgba(20, 16, 42, .62); padding: 8px 10px;
+         border-radius: 8px; pointer-events: none; font: 12px/1.45 ui-monospace, monospace; }
+  #panel { position: fixed; right: 4vw; top: 10vh; bottom: 10vh; width: min(520px, 42vw); border-radius: 14px;
+           background: linear-gradient(180deg, rgba(40, 30, 80, .92), rgba(24, 18, 52, .94)); border: 1px solid #b89be0;
+           box-shadow: 0 20px 60px rgba(0,0,0,.45); opacity: 0; transform: translateY(12px) scale(.98);
+           transition: opacity .18s cubic-bezier(.2,.8,.2,1), transform .18s cubic-bezier(.2,.8,.2,1); padding: 22px; box-sizing: border-box;
+           pointer-events: none; }
+  #panel h2 { margin: 0 0 12px; font-weight: 700; letter-spacing: .02em; }
+  #panel .slot { height: 54px; margin: 10px 0; border-radius: 10px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">…</div>
+<div id="panel"><h2>Снаряжение</h2><div class="slot"></div><div class="slot"></div><div class="slot"></div><div class="slot"></div><div class="slot"></div></div>
+<script src="engine.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+--- a/src/content/game.ts
++++ b/src/content/game.ts
+@@ -7,7 +7,7 @@
+ import type { CameraMode, Walker } from '../contracts';
+ import type { Avatar, SiteSession, UiHost } from '../contracts/modules';
+ import { setAppearanceFn, siteDefaults } from '../net/site';
+-import { createEngine, createInput, createCameraRig, createPlayerController, layoutColliderBoxes } from '../engine';
++import { createEngine, createInput, createCameraRig, createPlayerController, layoutColliderBoxes, CrowdLod } from '../engine';
+ import { buildCity, createSvgArt } from '../world';
+ import { createAvatarKit, createLabels, appearanceFrom, RECOMMENDED_NEAR } from '../avatar';
+ import { mountUi } from '../ui';
+@@ -66,28 +66,35 @@
+   engine.camera.add(vm.root);
+   if (!engine.camera.parent) engine.scene.add(engine.camera);
+   labels.set(me.login, { name: me.app.name, level: me.app.level, me: true });
+-  let meKey = JSON.stringify(me.app);
++  let meKey = JSON.stringify(me.app), meApp: unknown = me.app;
+ 
+   /* ---- others ---- */
+-  const avs = new Map<string, { av: Avatar; key: string }>();
++  // app: identity of the Appearance object last applied (cheap check first; JSON only when the object was replaced)
++  const avs = new Map<string, { av: Avatar; key: string; app: unknown; lod: number; slot: number }>();
++  const crowd = new CrowdLod(64);
+   const anchors = new Map<string, THREE.Vector3>();
+   const bubbleIds = new Map<string, string>();
+-  const MAX_DRAWN = () => [10, 18, 28, 40][engine.quality];
+   const sync = () => {
+     for (const [l, a] of avs) if (!store.walkers.has(l)) {
+       engine.scene.remove(a.av.root); a.av.dispose(); avs.delete(l); labels.remove(l); anchors.delete(l); bubbleIds.delete(l);
+     }
+     for (const w of store.walkers.values()) {
+-      const key = JSON.stringify(w.app);
+       let a = avs.get(w.login);
+       if (!a) {
+-        a = { av: kit.create(w.app), key }; avs.set(w.login, a); engine.scene.add(a.av.root);
++        a = { av: kit.create(w.app), key: JSON.stringify(w.app), app: w.app, lod: -1, slot: -1 }; avs.set(w.login, a); engine.scene.add(a.av.root);
+         anchors.set(w.login, new THREE.Vector3());
+         labels.set(w.login, { name: w.app.name, level: w.app.level });
+-      } else if (a.key !== key) { a.av.setAppearance(w.app); a.key = key; labels.set(w.login, { name: w.app.name, level: w.app.level }); }
++      } else if (a.app !== w.app) {
++        a.app = w.app;
++        const key = JSON.stringify(w.app);
++        if (a.key !== key) { a.av.setAppearance(w.app); a.key = key; labels.set(w.login, { name: w.app.name, level: w.app.level }); }
++      }
++    }
++    if (store.me && store.me.app !== meApp) {
++      meApp = store.me.app;
++      const k = JSON.stringify(store.me.app);
++      if (k !== meKey) { meKey = k; meAv.setAppearance(store.me.app); vm.setAppearance(store.me.app); meAv.play('equip'); labels.set(me.login, { name: store.me.app.name, level: store.me.app.level, me: true }); }
+     }
+-    const k = JSON.stringify(store.me?.app);
+-    if (store.me && k !== meKey) { meKey = k; meAv.setAppearance(store.me.app); vm.setAppearance(store.me.app); meAv.play('equip'); labels.set(me.login, { name: store.me.app.name, level: store.me.app.level, me: true }); }
+   };
+   store.on('walkers', sync); sync();
+   anchors.set(me.login, new THREE.Vector3());
+@@ -168,24 +175,6 @@
+     meAv.root.rotation.y = me.face;
+     meAv.update(dt, t, player.speed / 230);
+     anchors.get(me.login)!.set(feet.x, feet.y + meAv.headTop + 0.15, feet.z);
+-    let drawn = 0; const cap = MAX_DRAWN();
+-    const cam = engine.camera.position;
+-    for (const w of store.walkers.values()) {
+-      const a = avs.get(w.login); if (!a) continue;
+-      const wx = toX(w.x), wz = toZ(w.y), wy = world.groundAt(w.x, w.y);
+-      const d2 = (wx - cam.x) ** 2 + (wz - cam.z) ** 2;
+-      const vis = drawn < cap || d2 < 100;
+-      a.av.root.visible = vis;
+-      if (!vis) { anchors.get(w.login)!.set(0, -999, 0); continue; }
+-      drawn++;
+-      a.av.root.position.set(wx, wy, wz);
+-      a.av.root.rotation.y = w.face;
+-      a.av.setLod(d2 < 144 ? 0 : d2 < 900 ? 1 : 2);
+-      a.av.setAlpha(w.alpha);
+-      a.av.update(dt, t, w.speed / 230);
+-      anchors.get(w.login)!.set(wx, wy + a.av.headTop + 0.15, wz);
+-      bubble(w);
+-    }
+     if (store.me) bubble(store.me);
+     // 4. camera
+     rig.face = meAv.root.rotation.y;
+@@ -202,6 +191,31 @@
+     if (fpNow !== fpShown) { fpShown = fpNow; meAv.setFirstPerson(fpNow); }
+     const vmOn = fpNow && !menuOpen && !overlay;
+     if (vmOn !== vmShown) { vmShown = vmOn; vm.setVisible(vmOn); }
++    // 4b. others: draw/LOD budget per quality, nearest-first among those in view (camera is final for this frame)
++    crowd.begin(engine.camera, engine.quality);
++    for (const w of store.walkers.values()) {
++      const a = avs.get(w.login); if (!a) continue;
++      const p = a.av.root.position;
++      p.set(toX(w.x), world.groundAt(w.x, w.y), toZ(w.y));
++      a.slot = crowd.add(p.x, p.y, p.z, a.lod);
++    }
++    crowd.resolve();
++    for (const w of store.walkers.values()) {
++      const a = avs.get(w.login); if (!a) continue;
++      const lod = crowd.lod(a.slot);
++      a.lod = lod;
++      a.av.root.visible = lod >= 0;
++      const anc = anchors.get(w.login)!;
++      if (lod < 0) { anc.set(0, -999, 0); continue; }
++      const p = a.av.root.position;
++      a.av.root.rotation.y = w.face;
++      a.av.setLod(lod as 0 | 1 | 2);
++      a.av.setAlpha(w.alpha);
++      a.av.update(dt, t, w.speed / 230);
++      // nameplate only for the nearest few (one draw call each); a chat bubble always keeps its anchor
++      if (crowd.label(a.slot) || w.bubble) anc.set(p.x, p.y + a.av.headTop + 0.15, p.z); else anc.set(0, -999, 0);
++      bubble(w);
++    }
+     // 5. labels, world, door focus
+     labels.update(anchors, engine.camera, dt);
+     world.update(dt, t, engine.camera);
+@@ -210,7 +224,7 @@
+       let best = 2.2 * 2.2;
+       for (const d of world.doors) {
+         q.copy(d.pos); const dd = (q.x - feet.x) ** 2 + (q.z - feet.z) ** 2;
+-        if (dd < best) { best = dd; focus = { id: d.id, title: d.title, icon: d.icon }; }
++        if (dd < best) { best = dd; focus = d; }   // the door record itself: no per-frame object
+       }
+     }
+     ui.update(dt);
