@@ -1,0 +1,28 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: node scripts/build.mjs --prod
+      - name: Check version matches tag
+        run: |
+          v=$(node -p "require('./dist/manifest.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "manifest $v != tag ${GITHUB_REF_NAME}"; exit 1; }
+      - run: node scripts/pack.mjs
+      - name: Publish release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            && gh release upload "${GITHUB_REF_NAME}" legion-3d-*.zip --clobber \
+            || gh release create "${GITHUB_REF_NAME}" legion-3d-*.zip --title "Legion 3D ${GITHUB_REF_NAME}" --notes-file .github/RELEASE_NOTES.md
