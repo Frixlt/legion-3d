@@ -69,18 +69,23 @@ export class ZRecorder {
       x0 = Math.min(x0, a[v * 3]); x1 = Math.max(x1, a[v * 3]); y0 = Math.min(y0, a[v * 3 + 1]); y1 = Math.max(y1, a[v * 3 + 1]); z0 = Math.min(z0, a[v * 3 + 2]); z1 = Math.max(z1, a[v * 3 + 2]);
     }
     if (x1 - x0 < 0.02 || y1 - y0 < 0.02 || z1 - z0 < 0.02) return;   // thin slabs never bury anything
-    for (let t = 0; t < nT; t++) {
-      const i0 = idx ? idx[t * 3] : t * 3, i1 = idx ? idx[t * 3 + 1] : t * 3 + 1, i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
-      const px = a[i0 * 3], py = a[i0 * 3 + 1], pz = a[i0 * 3 + 2];
-      const ux = a[i1 * 3] - px, uy = a[i1 * 3 + 1] - py, uz = a[i1 * 3 + 2] - pz, vx = a[i2 * 3] - px, vy = a[i2 * 3 + 1] - py, vz = a[i2 * 3 + 2] - pz;
-      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-      const l = Math.hypot(nx, ny, nz); if (l < 1e-9) continue;
-      nx /= l; ny /= l; nz /= l;
-      const d = nx * px + ny * py + nz * pz;
-      for (let v = 0; v < nV; v++) if (nx * a[v * 3] + ny * a[v * 3 + 1] + nz * a[v * 3 + 2] - d > 1e-4) return;   // not convex
-      planes[np++] = nx; planes[np++] = ny; planes[np++] = nz; planes[np++] = d;
+    // either winding: a downward-facing shell (a roof's underside layer) bounds the same convex region
+    sign: for (const sg of [1, -1]) {
+      np = 0;
+      for (let t = 0; t < nT; t++) {
+        const i0 = idx ? idx[t * 3] : t * 3, i1 = idx ? idx[t * 3 + 1] : t * 3 + 1, i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
+        const px = a[i0 * 3], py = a[i0 * 3 + 1], pz = a[i0 * 3 + 2];
+        const ux = a[i1 * 3] - px, uy = a[i1 * 3 + 1] - py, uz = a[i1 * 3 + 2] - pz, vx = a[i2 * 3] - px, vy = a[i2 * 3 + 1] - py, vz = a[i2 * 3 + 2] - pz;
+        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const l = Math.hypot(nx, ny, nz); if (l < 1e-9) continue;
+        nx *= sg / l; ny *= sg / l; nz *= sg / l;
+        const d = nx * px + ny * py + nz * pz;
+        for (let v = 0; v < nV; v++) if (nx * a[v * 3] + ny * a[v * 3 + 1] + nz * a[v * 3 + 2] - d > 1e-4) continue sign;   // not convex
+        planes[np++] = nx; planes[np++] = ny; planes[np++] = nz; planes[np++] = d;
+      }
+      this.convex.push({ id, x0, y0, z0, x1, y1, z1, planes: planes.slice(0, np) });
+      return;
     }
-    this.convex.push({ id, x0, y0, z0, x1, y1, z1, planes: planes.slice(0, np) });
   }
 
   /** Is the point inside a convex piece or under the ground? (a/b: the pair — same-facing faces never nudge into them) */

@@ -24,9 +24,9 @@ export function buildRows(R: RoomBase, st: RowsStock | null, env: RoomEnv): void
   K.shell({ w: W, d: D, h: H, wall: 'plaster', wallCol: C.wall, wainscot: C.wains, floor: 'wood', floorCol: C.floor, ceiling: 'beams', ceilCol: C.beam });
   // light timber framing on the back wall only (the sides carry shelves and awnings)
   for (const x of [-W / 2 + 0.1, -2.75, 2.75, W / 2 - 0.1]) K.box('wood', C.timber, x - 0.08, x + 0.08, 0, H, -D / 2, -D / 2 + 0.07);
-  K.box('wood', C.timber, -W / 2, W / 2, 2.62, 2.72, -D / 2, -D / 2 + 0.07);
+  K.box('wood', C.timber, -W / 2, W / 2, 2.62, 2.72, -D / 2, -D / 2 + 0.085);
   // checked floor runner from the door to the counter + a round rug
-  for (let i = 0; i < 10; i++) for (let j = 0; j < 3; j++) K.box('canvas', (i + j) % 2 ? '#fff3dc' : '#e0504a', -0.75 + j * 0.5, -0.25 + j * 0.5, 0, 0.012, -1.0 + i * 0.45, -0.55 + i * 0.45);
+  for (let i = 0; i < 10; i++) for (let j = 0; j < 3; j++) K.floorBox('canvas', (i + j) % 2 ? '#fff3dc' : '#e0504a', -0.75 + j * 0.5, -0.25 + j * 0.5, -1.0 + i * 0.45, -0.55 + i * 0.45);
   roundRug(K, -2.6, 1.6, 0.8, '#ffcf4a', '#3f8f8a');
 
   const food = (st && st.food) || [], potions = (st && st.potions) || [];
@@ -78,7 +78,7 @@ export function buildRows(R: RoomBase, st: RowsStock | null, env: RoomEnv): void
   // back wall: shelves of jars, plates, bread, cheese behind the cook
   for (const y of [1.25, 1.85]) {
     K.box('wood', C.shelf, -2.6, 2.6, y - 0.05, y, -D / 2, -D / 2 + 0.35);
-    K.box('wood', C.lip, -2.6, 2.6, y - 0.07, y + 0.01, -D / 2 + 0.33, -D / 2 + 0.36);
+    K.box('wood', C.lip, -2.62, 2.62, y - 0.07, y + 0.01, -D / 2 + 0.33, -D / 2 + 0.36);
     for (let i = 0; i < 9; i++) {
       const x = -2.35 + i * 0.58, c = ['#ff9fb2', '#9fe39a', '#ffe27a', '#7fd6e6', '#ffb27a'][(i + (y > 1.5 ? 2 : 0)) % 5];
       if (i % 3 === 1) { if (y > 1.5) K.cyl('back', '#f2ead8', x, y, -D / 2 + 0.18, 0.13, 0.03, 12); else { K.cyl('back', '#ffd84a', x, y, -D / 2 + 0.18, 0.15, 0.1, 12); K.cyl('back', '#f2c43a', x, y + 0.1, -D / 2 + 0.18, 0.12, 0.012, 12); } }
@@ -92,7 +92,7 @@ export function buildRows(R: RoomBase, st: RowsStock | null, env: RoomEnv): void
   // fish garland / bunting over the counter
   for (let i = 0; i < 11; i++) {
     const x = -2.5 + i * 0.5, y = 3.15 - Math.sin((i / 10) * Math.PI) * 0.3, z = -D / 2 + 1.0;
-    K.box('back', '#2b1d18', x - 0.25, x + 0.25, y + 0.1, y + 0.115, z - 0.006, z + 0.006);
+    K.box('back', '#2b1d18', x - 0.25, x + 0.25, y + 0.107, y + 0.122, z - 0.006, z + 0.006);
     if (i % 2) { K.ball('back', ['#8fb6c8', '#ff9a6a', '#c9ccd6'][i % 3], x, y, z, 0.11, 0.42); K.cone('back', '#8fb6c8', x, y - 0.18, z, 0.06, 0.1, true); }
     else K.geo('flat', new THREE.ConeGeometry(0.12, 0.24, 3), new THREE.Matrix4().compose(new THREE.Vector3(x, y - 0.02, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI), new THREE.Vector3(1, 1, 0.2)), ['#ff8fa3', '#ffcf4a', '#7fb0e8'][i % 3]);
   }

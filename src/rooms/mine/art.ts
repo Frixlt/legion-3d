@@ -104,7 +104,7 @@ export function rockGeo(kind: 'round' | 'slab' | 'hard' | 'pillar', variant: num
     g0.computeBoundingBox();
     const bb = g0.boundingBox!, sy = 1 / (bb.max.y - bb.min.y), sxz = 1 / Math.max(-bb.min.x, bb.max.x, -bb.min.z, bb.max.z);
     g0.scale(sxz, sy, sxz); g0.translate(0, -bb.min.y * sy, 0);
-    const g = g0.toNonIndexed(); g0.dispose();
+    const g = g0.index ? g0.toNonIndexed() : g0; if (g !== g0) g0.dispose();
     g.computeVertexNormals();
     const p = g.attributes.position as THREE.BufferAttribute, n = g.attributes.normal as THREE.BufferAttribute;
     const col = new Float32Array(p.count * 3);

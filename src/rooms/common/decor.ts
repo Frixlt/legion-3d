@@ -64,7 +64,7 @@ export function basket(K: RoomKit, x: number, y: number, z: number, r = 0.22, fi
 export function sack(K: RoomKit, x: number, z: number, col = '#d8c08a', s = 1, y = 0): void {
   K.ball('canvas', col, x, y + 0.28 * s, z, 0.27 * s, 1.15);
   K.cyl('canvas', col, x, y + 0.55 * s, z, 0.08 * s, 0.1 * s, 8);
-  K.cyl('back', '#8a5a2b', x, y + 0.56 * s, z, 0.085 * s, 0.025, 8);
+  K.cyl('back', '#8a5a2b', x, y + 0.56 * s, z, 0.08 * s + 0.008, 0.025, 8);   // the tie stands ≥ 7 mm proud of the neck
 }
 
 /** Potted plant: terracotta pot + leafy balls (+ optional flowers). */
@@ -99,11 +99,13 @@ export function wallLamp(K: RoomKit, x: number, y: number, z: number, ry: number
 
 /** Tablecloth over a table top (y = top), hanging `hang` m down on every side. */
 export function cloth(K: RoomKit, x0: number, x1: number, z0: number, z1: number, y: number, col: string, hang = 0.14, trim?: string): void {
-  K.box('canvas', col, x0 - 0.03, x1 + 0.03, y, y + 0.012, z0 - 0.03, z1 + 0.03);
-  K.box('canvas', col, x0 - 0.03, x1 + 0.03, y - hang, y, z0 - 0.04, z0 - 0.03);
-  K.box('canvas', col, x0 - 0.03, x1 + 0.03, y - hang, y, z1 + 0.03, z1 + 0.04);
-  K.box('canvas', col, x0 - 0.04, x0 - 0.03, y - hang, y, z0 - 0.03, z1 + 0.03);
-  K.box('canvas', col, x1 + 0.03, x1 + 0.04, y - hang, y, z0 - 0.03, z1 + 0.03);
+  // the hanging sides reach the top sheet's top (y + 0.012): their tops never lie in the table top's plane
+  const t = y + 0.012;
+  K.box('canvas', col, x0 - 0.03, x1 + 0.03, y, t, z0 - 0.03, z1 + 0.03);
+  K.box('canvas', col, x0 - 0.04, x1 + 0.04, y - hang, t, z0 - 0.04, z0 - 0.03);
+  K.box('canvas', col, x0 - 0.04, x1 + 0.04, y - hang, t, z1 + 0.03, z1 + 0.04);
+  K.box('canvas', col, x0 - 0.04, x0 - 0.03, y - hang, t, z0 - 0.03, z1 + 0.03);
+  K.box('canvas', col, x1 + 0.03, x1 + 0.04, y - hang, t, z0 - 0.03, z1 + 0.03);
   if (trim) { K.box('canvas', trim, x0 - 0.04, x1 + 0.04, y - hang - 0.03, y - hang, z1 + 0.03, z1 + 0.05); K.box('canvas', trim, x0 - 0.04, x1 + 0.04, y - hang - 0.03, y - hang, z0 - 0.05, z0 - 0.03); }
 }
 
@@ -112,14 +114,14 @@ export function painting(K: RoomKit, x: number, y: number, z: number, ry: number
   const sx = Math.sin(ry), sz = Math.cos(ry);
   K.rbox('wood', frame, x + sx * 0.03, y, z + sz * 0.03, w + 0.12, h + 0.12, 0.05, ry);
   const n = cols.length;
-  for (let i = 0; i < n; i++) K.rbox('back', cols[i], x + sx * 0.06, y - h / 2 + h * (i + 0.5) / n, z + sz * 0.06, w, h / n + 0.001, 0.01, ry);
+  for (let i = 0; i < n; i++) K.rbox('back', cols[i], x + sx * 0.06, y - h / 2 + h * (i + 0.5) / n, z + sz * 0.06, w, h / n, 0.01, ry);   // butt-joined bands
   K.rbox('back', '#fff3c4', x + sx * 0.07 + Math.cos(ry) * w * 0.25, y + h * 0.25, z + sz * 0.07 - Math.sin(ry) * w * 0.25, h * 0.16, h * 0.16, 0.01, ry);
 }
 
 /** Bundle hanging from a beam: string + a cluster (herbs, garlic, peppers). */
 export function hanging(K: RoomKit, x: number, y: number, z: number, top: number, col: string, kind: 'herb' | 'garlic' | 'pepper' | 'sausage' = 'herb'): void {
   K.box('back', '#3a2a24', x - 0.006, x + 0.006, y, top, z - 0.006, z + 0.006);
-  if (kind === 'herb') for (let i = 0; i < 4; i++) K.cone('leaf', i % 2 ? col : '#6ab85a', x + (i - 1.5) * 0.04, y - 0.3, z, 0.06, 0.32);
+  if (kind === 'herb') for (let i = 0; i < 4; i++) K.cone('leaf', i % 2 ? col : '#6ab85a', x + (i - 1.5) * 0.04, y - 0.3 - i * 0.012, z, 0.06, 0.32);   // staggered: overlapping bases never share a plane
   else if (kind === 'garlic') for (let i = 0; i < 4; i++) K.ball('back', col, x + (i % 2 ? 0.05 : -0.05), y - 0.06 - i * 0.1, z, 0.06, 0.9);
   else if (kind === 'pepper') for (let i = 0; i < 5; i++) K.cone('back', col, x + (i - 2) * 0.035, y - 0.22, z + (i % 2) * 0.02, 0.025, 0.2);
   else K.cyl('back', col, x, y - 0.32, z, 0.05, 0.3, 8);
@@ -153,8 +155,8 @@ export function mug(K: RoomKit, x: number, y: number, z: number, col = '#e8dcc8'
 
 /** Round rug (two discs). */
 export function roundRug(K: RoomKit, x: number, z: number, r: number, col: string, border: string): void {
-  K.geo('canvas', DISC, M(x, 0.008, z, r * 2, 1, r * 2), border);
-  K.geo('canvas', DISC, M(x, 0.014, z, r * 2 - 0.24, 1, r * 2 - 0.24), col);
+  K.floorDisc('canvas', border, x, z, r);
+  K.floorDisc('canvas', col, x, z, r - 0.12);
 }
 const DISC = new THREE.CylinderGeometry(0.5, 0.5, 0.012, 28, 1);
 /** Low-poly bulb / star (8 triangles) for the many small emissive dots. */
@@ -192,16 +194,17 @@ export function wallShelf(K: RoomKit, x: number, y: number, z: number, ry: numbe
 
 /** Patterned rectangular rug: border, field, a row of diamonds and end fringes (reads as a woven carpet). */
 export function patternRug(K: RoomKit, x0: number, x1: number, z0: number, z1: number, field: string, border: string, accent: string): void {
-  K.box('canvas', border, x0, x1, 0, 0.012, z0, z1);
-  K.box('canvas', field, x0 + 0.14, x1 - 0.14, 0, 0.016, z0 + 0.14, z1 - 0.14);
+  // stacked floor decals (border → field → diamonds), never coplanar
+  K.floorBox('canvas', border, x0, x1, z0, z1);
+  K.floorBox('canvas', field, x0 + 0.14, x1 - 0.14, z0 + 0.14, z1 - 0.14);
   const long = (z1 - z0) >= (x1 - x0), L = long ? z1 - z0 : x1 - x0, n = Math.max(2, Math.round((L - 0.4) / 0.55));
   for (let i = 0; i < n; i++) {
     const t = (i + 0.5) / n, cx = long ? (x0 + x1) / 2 : x0 + 0.2 + (L - 0.4) * t, cz = long ? z0 + 0.2 + (L - 0.4) * t : (z0 + z1) / 2;
-    K.rbox('canvas', i % 2 ? accent : border, cx, 0.012, cz, 0.26, 0.012, 0.26, Math.PI / 4);
+    K.floorRBox('canvas', i % 2 ? accent : border, cx, cz, 0.26, 0.26, Math.PI / 4);
   }
   for (let i = 0; i < 9; i++) {
     const t = (i + 0.5) / 9;
-    if (long) for (const z of [z0 - 0.06, z1]) K.box('canvas', '#f2ead8', x0 + (x1 - x0) * t - 0.015, x0 + (x1 - x0) * t + 0.015, 0, 0.01, z, z + 0.06);
-    else for (const x of [x0 - 0.06, x1]) K.box('canvas', '#f2ead8', x, x + 0.06, 0, 0.01, z0 + (z1 - z0) * t - 0.015, z0 + (z1 - z0) * t + 0.015);
+    if (long) for (const z of [z0 - 0.06, z1]) K.floorBox('canvas', '#f2ead8', x0 + (x1 - x0) * t - 0.013, x0 + (x1 - x0) * t + 0.013, z, z + 0.06, 0.006);
+    else for (const x of [x0 - 0.06, x1]) K.floorBox('canvas', '#f2ead8', x, x + 0.06, z0 + (z1 - z0) * t - 0.013, z0 + (z1 - z0) * t + 0.013, 0.006);
   }
 }

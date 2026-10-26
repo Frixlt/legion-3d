@@ -47,13 +47,19 @@ export function makeRoomMats(pal: Pal, signs: SignAtlas): Record<MatKey, THREE.M
     flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide }),
     dark: new THREE.MeshBasicMaterial({ color: '#100d17' }),
     glass: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.35, depthWrite: false }),
-    back: plain,
+    // 'back' = painted details / decals (prop paint: the dummy's target on its burlap chest): pulled forward in depth
+    // like the city's decals, so a painted layer never flickers against the surface it is painted on
+    back: Object.assign(plain, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     emit, glow: emit, sign: signMat,
     water: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0.2 }),
   };
   for (const [k, m] of Object.entries(mats)) m.name = 'room:' + k;
   return mats;
 }
+
+/** Material key for a closed solid: double-sided canvas → its one-sided twin (same texture). */
+const DISC32 = new THREE.CylinderGeometry(0.5, 0.5, 1, 32, 1);
+const solidKey = (m: MatKey): MatKey | typeof ONE_SIDED => (m === 'canvas' ? ONE_SIDED : m);
 
 /** The room batch reuses the city's 'rock' key for one-sided (FrontSide) canvas: tent walls seen from inside only. */
 export const ONE_SIDED = 'rock' as const;
@@ -88,6 +94,19 @@ export interface RoomShellOpts {
   cutaway?: boolean;
 }
 
+/** The entrance door's leaves (RoomKit.exitDoor): set(t) swings them out (0 closed, 1 open ≈ 95°). */
+export class RoomDoor {
+  readonly leaves: { pivot: THREE.Group; sign: -1 | 1 }[] = [];
+  private t = 0;
+  get open(): number { return this.t; }
+  set(t: number): void {
+    this.t = t < 0 ? 0 : t > 1 ? 1 : t;
+    // outward (into the street, +Z): the leaf on the left (hinge at −x, sign −1) turns by −angle around Y
+    const a = this.t * 1.65;
+    for (const l of this.leaves) l.pivot.rotation.y = l.sign < 0 ? -a : a;
+  }
+}
+
 /** Metres of room behind the cutaway entrance wall (TP arm 3.2 m + margin). */
 export const VESTIBULE = 3.2;
 
@@ -118,8 +137,12 @@ export class RoomKit {
   readonly wk: WorldKitCtx;
   private glowTex: THREE.Texture | null = null;
 
+  /** Test hook: every new kit's batch reports its pieces here (z-fight detector, test/rooms-zfight.test.ts). */
+  static recorder: Batch['recorder'] = null;
+
   constructor(readonly pal: Pal, readonly quality = 2, name = 'room') {
     this.root.name = name;
+    this.b.recorder = RoomKit.recorder;
     this.signs = new SignAtlas(pal);
     this.mats = makeRoomMats(pal, this.signs);
     this.owned.push(this.signs.texture);
@@ -128,24 +151,58 @@ export class RoomKit {
   }
 
   /* ------------------------------------------------------------ primitives */
+  // Closed solids (box, rbox, cyl, ball) never need back faces: 'canvas' (double-sided, for open sheets) is drawn with
+  // its one-sided twin, so a rug / cloth / runner lying on a surface has no visible bottom face fighting that surface.
   box(mat: MatKey, col: THREE.ColorRepresentation, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, uv: number | 'keep' = 1): void {
-    this.b.add(mat, GEO.box, M((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0)), col, uv);
+    this.b.add(solidKey(mat), GEO.box, M((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0)), col, uv);
   }
   rbox(mat: MatKey, col: THREE.ColorRepresentation, cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, ry = 0, rx = 0, rz = 0): void {
-    this.b.add(mat, GEO.box, M(cx, cy, cz, sx, sy, sz, rx, ry, rz), col, 1);
+    this.b.add(solidKey(mat), GEO.box, M(cx, cy, cz, sx, sy, sz, rx, ry, rz), col, 1);
   }
   cyl(mat: MatKey, col: THREE.ColorRepresentation, x: number, y0: number, z: number, r: number, h: number, seg: 8 | 12 | 16 = 12): void {
     const g = seg === 8 ? GEO.cyl8 : seg === 16 ? GEO.cyl16 : GEO.cyl12;
-    this.b.add(mat, g, M(x, y0 + h / 2, z, r * 2, h, r * 2), col, 1);
+    this.b.add(solidKey(mat), g, M(x, y0 + h / 2, z, r * 2, h, r * 2), col, 1);
   }
   ball(mat: MatKey, col: THREE.ColorRepresentation, x: number, y: number, z: number, r: number, sy = 1): void {
-    this.b.add(mat, GEO.sphere, M(x, y, z, r * 2, r * 2 * sy, r * 2), col, 1);
+    this.b.add(solidKey(mat), GEO.sphere, M(x, y, z, r * 2, r * 2 * sy, r * 2), col, 1);
   }
   cone(mat: MatKey, col: THREE.ColorRepresentation, x: number, y0: number, z: number, r: number, h: number, four = false): void {
     this.b.add(mat, four ? GEO.cone4 : GEO.cone16, M(x, y0 + h / 2, z, r * 2, h, r * 2), col, 1);
   }
   geo(mat: MatKey | typeof ONE_SIDED, g: THREE.BufferGeometry, m: THREE.Matrix4, col: THREE.ColorRepresentation | null, uv: number | 'keep' = 1): void {
     this.b.add(mat, g, m, col, uv);
+  }
+  /* ------------------------------------------------------------ floor decals (rugs, runners, mats) */
+  /** Floor decals placed so far: x0 x1 z0 z1 top. */
+  private decals: number[] = [];
+  /**
+   * Base height for a floor decal over [x0,x1]×[z0,z1]: 0 on bare floor, else on top of every decal it overlaps — so
+   * rugs, runners and mats stack (border → field → pattern → mat) and no two of them ever share a plane (z-fighting).
+   */
+  decalBase(x0: number, x1: number, z0: number, z1: number): number {
+    const D = this.decals, e = 1e-4;
+    let y = 0;
+    for (let i = 0; i < D.length; i += 5) if (x0 < D[i + 1] - e && x1 > D[i] + e && z0 < D[i + 3] - e && z1 > D[i + 2] + e && D[i + 4] > y) y = D[i + 4];
+    return y;
+  }
+  /** Rectangular floor decal `h` thick (≥ 6 mm keeps stacked tops apart), stacked by decalBase. */
+  floorBox(mat: MatKey, col: THREE.ColorRepresentation, x0: number, x1: number, z0: number, z1: number, h = 0.008): void {
+    const y = this.decalBase(x0, x1, z0, z1);
+    this.box(mat, col, x0, x1, y, y + h, z0, z1);
+    this.decals.push(x0, x1, z0, z1, y + h);
+  }
+  /** Rotated square-ish floor decal (diamonds), stacked by its bounding rectangle. */
+  floorRBox(mat: MatKey, col: THREE.ColorRepresentation, cx: number, cz: number, sx: number, sz: number, ry: number, h = 0.008): void {
+    const c = Math.abs(Math.cos(ry)), sn = Math.abs(Math.sin(ry)), hx = (sx * c + sz * sn) / 2, hz = (sx * sn + sz * c) / 2;
+    const y = this.decalBase(cx - hx, cx + hx, cz - hz, cz + hz);
+    this.rbox(mat, col, cx, y + h / 2, cz, sx, h, sz, ry);
+    this.decals.push(cx - hx, cx + hx, cz - hz, cz + hz, y + h);
+  }
+  /** Round floor decal (rug disc, training ring), stacked by its bounding square. */
+  floorDisc(mat: MatKey, col: THREE.ColorRepresentation, x: number, z: number, r: number, h = 0.008): void {
+    const y = this.decalBase(x - r, x + r, z - r, z + r);
+    this.b.add(solidKey(mat), DISC32, M(x, y + h / 2, z, r * 2, h, r * 2), col, 1);
+    this.decals.push(x - r, x + r, z - r, z + r, y + h);
   }
   glow(x: number, y: number, z: number, size: number, color: string, k = 1): void {
     const c = new THREE.Color(color);
@@ -185,19 +242,24 @@ export class RoomKit {
   prop(kind: PropKind, x: number, y: number, z: number, rotY = 0, scale = 1, opts: { variant?: number; colors?: string[]; solid?: boolean | number } = {}): { w: number; d: number; h: number } {
     const parts = PropKit.parts(kind, { variant: opts.variant, colors: opts.colors });
     const m = new THREE.Matrix4().compose(_v.set(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY), new THREE.Vector3(scale, scale, scale));
+    this.b.tag = 'prop:' + kind;   // names the pieces for the z-fight test (a prop model's own layers are world/props')
     for (const p of parts) {
       const mk = PROP_MAT[p.mat];
       if (!mk) continue;
       this.b.add(mk, p.geo, m, null, 'keep');
     }
+    this.b.tag = '';
     const fp = PropKit.footprint(kind, { variant: opts.variant, colors: opts.colors });
     const c = Math.abs(Math.cos(rotY)), s = Math.abs(Math.sin(rotY));
     const w = (fp.w * c + fp.d * s) * scale, d = (fp.w * s + fp.d * c) * scale, h = fp.h * scale;
     if (opts.solid !== false) this.solid(x - w / 2, x + w / 2, z - d / 2, z + d / 2, typeof opts.solid === 'number' ? opts.solid : h > 1.3 ? Infinity : y + h);
     return { w, d, h };
   }
+  /** Every sign placed (text, centre, facing yaw rotY: 0 = +Z) — facing audits (test/rooms-facing.test.ts). */
+  readonly signSpots: { text: string; x: number; y: number; z: number; ry: number }[] = [];
   /** Sign from the atlas, facing direction rotY (0 = facing +Z). Returns its height. */
   sign(text: string, x: number, y: number, z: number, w: number, rotY = 0, opts: { bg?: string; fg?: string; sub?: string; plate?: boolean } = {}): number {
+    this.signSpots.push({ text, x, y, z, ry: rotY });
     const s = this.signs.add(text, opts);
     const h = w / s.aspect;
     const g = new THREE.PlaneGeometry(1, 1);
@@ -226,6 +288,7 @@ export class RoomKit {
     const wall = o.wall || 'plaster', wc = o.wallCol || P.plaster;
     const V = o.cutaway === false ? 0 : VESTIBULE;
     this.bounds = { x0, x1, z0, z1 };
+    this.shellH = h;
     // floor (+ vestibule)
     this.box(o.floor || 'wood', o.floorCol || P.wood, x0 - t, x1 + t, -0.1, 0, z0 - t, z1 + t + V);
     // walls: back, left, right (side walls run on through the vestibule)
@@ -246,12 +309,12 @@ export class RoomKit {
     // wainscot / skirting
     const sk = o.wainscot || P.woodD, sh = o.wainscot ? 0.9 : 0.16;
     this.box('wood', sk, x0, x1, 0, sh, z0, z0 + 0.04);
-    this.box('wood', sk, x0, x0 + 0.04, 0, sh, z0, z1);
-    this.box('wood', sk, x1 - 0.04, x1, 0, sh, z0, z1);
+    this.box('wood', sk, x0, x0 + 0.04, 0, sh, z0 + 0.04, z1);   // side runs start past the back one (no shared corner faces)
+    this.box('wood', sk, x1 - 0.04, x1, 0, sh, z0 + 0.04, z1);
     front('wood', sk, x0, dg.x - dg.w / 2, 0, sh, z1 - 0.04);
     front('wood', sk, dg.x + dg.w / 2, x1, 0, sh, z1 - 0.04);
     if (o.wainscot) {
-      for (const [a, b2, c0, c1] of [[x0, x1, z0, z0 + 0.06], [x0, x0 + 0.06, z0, z1], [x1 - 0.06, x1, z0, z1]] as const) this.box('wood', P.woodL, a, b2, sh, sh + 0.06, c0, c1);
+      for (const [a, b2, c0, c1] of [[x0, x1, z0, z0 + 0.06], [x0, x0 + 0.06, z0 + 0.06, z1], [x1 - 0.06, x1, z0 + 0.06, z1]] as const) this.box('wood', P.woodL, a, b2, sh, sh + 0.06, c0, c1);
       front('wood', P.woodL, x0, dg.x - dg.w / 2, sh, sh + 0.06, z1 - 0.06);
       front('wood', P.woodL, dg.x + dg.w / 2, x1, sh, sh + 0.06, z1 - 0.06);
     }
@@ -305,7 +368,7 @@ export class RoomKit {
       this.box('wood', P.woodD, u - w / 2 - f, u - w / 2, y, y + h, z, z + 0.08);
       this.box('wood', P.woodD, u + w / 2, u + w / 2 + f, y, y + h, z, z + 0.08);
       this.box('wood', P.woodD, u - 0.025, u + 0.025, y, y + h, z, z + 0.05);
-      this.box('wood', P.woodD, u - w / 2, u + w / 2, y + h * 0.5, y + h * 0.5 + 0.05, z, z + 0.05);
+      this.box('wood', P.woodD, u - w / 2, u + w / 2, y + h * 0.5, y + h * 0.5 + 0.05, z, z + 0.04);
       this.ball('emit', '#fff3c4', u + w * 0.25, y + h * 0.75, z - 0.01, 0.06);
     } else {
       const x = side === 'left' ? B.x0 : B.x1, s = side === 'left' ? 1 : -1;
@@ -315,14 +378,14 @@ export class RoomKit {
       this.box('wood', P.woodD, x, x + 0.08 * s, y, y + h, u - w / 2 - f, u - w / 2);
       this.box('wood', P.woodD, x, x + 0.08 * s, y, y + h, u + w / 2, u + w / 2 + f);
       this.box('wood', P.woodD, x, x + 0.05 * s, y, y + h, u - 0.025, u + 0.025);
-      this.box('wood', P.woodD, x, x + 0.05 * s, y + h * 0.5, y + h * 0.5 + 0.05, u - w / 2, u + w / 2);
+      this.box('wood', P.woodD, x, x + 0.04 * s, y + h * 0.5, y + h * 0.5 + 0.05, u - w / 2, u + w / 2);
     }
   }
-  /** Rug on the floor (thin box). */
+  /** Rug on the floor: border + field, stacked floor decals. */
   rug(x0: number, x1: number, z0: number, z1: number, col: string, border?: string): void {
-    if (border) this.box('canvas', border, x0, x1, 0, 0.012, z0, z1);
+    if (border) this.floorBox('canvas', border, x0, x1, z0, z1);
     const b = border ? 0.12 : 0;
-    this.box('canvas', col, x0 + b, x1 - b, 0, 0.018, z0 + b, z1 - b);
+    this.floorBox('canvas', col, x0 + b, x1 - b, z0 + b, z1 - b);
   }
   /** Hanging lantern from the ceiling: chain, cage, emissive glass, light. */
   lantern(x: number, y: number, z: number, ceil: number, color = '#ffcf6a', light = true): void {
@@ -333,34 +396,97 @@ export class RoomKit {
     this.box('metal', P.metal, x - 0.12, x + 0.12, y - 0.16, y - 0.12, z - 0.12, z + 0.12);
     if (light) this.light(x, y - 0.1, z, '#ffb35c', 5, 8, 1.4); else this.glow(x, y, z, 1.2, color, 0.8);
   }
-  /** Exit doorway in the front wall: open door leaf, warm street glow outside, mat. Returns the hit box centre. */
-  exitDoor(x: number, w = 1.4, h = 2.3): THREE.Vector3 {
-    const z = this.bounds.z1, P = this.pal;
-    // street seen through the door: one-sided backdrop (facing the room) — the TP camera behind it sees through it
-    const back = (col: string, xa: number, xb: number, ya: number, yb: number, zz: number, mat: MatKey = 'emit') => this.b.add(mat, GEO.plane, M((xa + xb) / 2, (ya + yb) / 2, zz, xb - xa, yb - ya, 1, 0, Math.PI, 0), col, 1);
-    back('#1c1a44', x - w / 2 - 0.8, x + w / 2 + 0.8, 0, h + 0.6, z + 0.62);
-    back('#3a2f6e', x - w / 2 - 0.8, x + w / 2 + 0.8, 0, h * 0.3, z + 0.6);
-    back('#2a2050', x - w / 2 - 0.8, x + w / 2 + 0.8, h * 0.3, h * 0.42, z + 0.61);
-    // a street lamp across the street
-    back('#151230', x + w * 0.22 - 0.03, x + w * 0.22 + 0.03, 0, h * 0.72, z + 0.58);
-    back('#ffcf6a', x + w * 0.22 - 0.07, x + w * 0.22 + 0.07, h * 0.72, h * 0.8, z + 0.58);
-    back('#5a4a6e', x + w * 0.22 - 0.2, x + w * 0.22 + 0.2, h * 0.62, h * 0.92, z + 0.59);
-    this.box('paving', P.ground, x - w / 2, x + w / 2, -0.1, 0, z, z + 0.62);
-    // frame: trim facing the room (one-sided with a cutaway wall, so it never frames the TP camera's view)
-    if (this.vestibule) {
-      back(P.woodD, x - w / 2 - 0.14, x - w / 2, 0, h + 0.14, z - 0.05, 'wood');
-      back(P.woodD, x + w / 2, x + w / 2 + 0.14, 0, h + 0.14, z - 0.05, 'wood');
-      back(P.woodD, x - w / 2, x + w / 2, h, h + 0.14, z - 0.05, 'wood');
+  /** The entrance door built by exitDoor() (leaves to swing), or null. */
+  door: RoomDoor | null = null;
+  /** Height of the shell's walls (0 = no shell): room for a transom over the door. */
+  shellH = 0;
+  /**
+   * The entrance: a CLOSED door in the front wall (z = bounds.z1, or `o.z`). Everything faces the room and is
+   * one-sided — architrave, two wooden leaves with raised panels, lit glass lights and iron hinges, a ring handle, a
+   * lit transom over the door, a doormat — so from inside it reads as a proper door, and the TP camera that backs out
+   * through the cutaway entrance wall into the vestibule looks straight through it. The leaves are their own meshes
+   * hinged at the jambs (door.set(t): 0 closed … 1 swung out into the street) for the enter / leave animation; behind
+   * them a warm street backdrop (seen only while the door is open). style 'curtain' (tent): two velvet flaps.
+   * Returns the hit centre.
+   */
+  exitDoor(x: number, w = 1.4, h = 2.3, o: { style?: 'wood' | 'curtain'; z?: number } = {}): THREE.Vector3 {
+    const z = o.z ?? this.bounds.z1, P = this.pal, curtain = o.style === 'curtain';
+    const RY = Math.PI;   // planes facing the room (−Z)
+    const face = (mat: MatKey | typeof ONE_SIDED, col: string, xa: number, xb: number, ya: number, yb: number, zz: number, b: Batch = this.b) => {
+      if (xb - xa < 1e-3 || yb - ya < 1e-3) return;
+      b.add(mat, GEO.plane, M((xa + xb) / 2, (ya + yb) / 2, zz, xb - xa, yb - ya, 1, 0, RY, 0), col, mat === 'emit' ? 'keep' : 1);
+    };
+    // the street behind the door (one-sided, faces the room; only seen while the door swings open): night sky, a lit
+    // house across the street with warm windows, the lamp-lit cobbles and a street lamp
+    const sx0 = x - w / 2 - 0.8, sx1 = x + w / 2 + 0.8;
+    face('emit', '#2a2a6e', sx0, sx1, h * 0.8, h + 0.6, z + 0.64);
+    face('emit', '#6e4c40', sx0, sx1, h * 0.28, h * 0.8, z + 0.63);
+    face('emit', '#4a3038', sx0, sx1, h * 0.78, h * 0.86, z + 0.62);
+    for (const u of [-0.32, 0.32]) face('emit', '#ffcf6a', x + u * w - 0.16, x + u * w + 0.16, h * 0.42, h * 0.62, z + 0.62);
+    face('emit', '#9a7258', sx0, sx1, 0.002, h * 0.28, z + 0.62);
+    face('emit', '#c8946a', x - w * 0.45, x + w * 0.45, 0.002, h * 0.16, z + 0.61);
+    face('emit', '#2a2030', x + w * 0.24 - 0.03, x + w * 0.24 + 0.03, 0.002, h * 0.74, z + 0.6);
+    face('emit', '#ffe2a0', x + w * 0.24 - 0.08, x + w * 0.24 + 0.08, h * 0.74, h * 0.84, z + 0.6);
+    this.glow(x + w * 0.24, h * 0.79, z + 0.5, 1.1, '#ffcf6a', 0.9);
+    // architrave (4 cm proud of the leaves) + head with a little cornice; transom over it when the wall is tall enough
+    const fw = 0.14, zA = z - 0.08, wood = P.woodD;
+    if (!curtain) {
+      face('wood', wood, x - w / 2 - fw, x - w / 2, 0, h + fw, zA);
+      face('wood', wood, x + w / 2, x + w / 2 + fw, 0, h + fw, zA);
+      face('wood', wood, x - w / 2, x + w / 2, h, h + fw, zA);
+      face('wood', P.woodL, x - w / 2 - fw - 0.05, x + w / 2 + fw + 0.05, h + fw, h + fw + 0.05, zA - 0.02);
+      if (this.shellH >= h + 0.75) {
+        const ty0 = h + fw + 0.12, ty1 = Math.min(this.shellH - 0.3, ty0 + 0.36), tw = w * 0.8;
+        face('emit', '#ffc98a', x - tw / 2, x + tw / 2, ty0, ty1, z - 0.02);
+        for (const u of [-0.25, 0, 0.25]) face('metal', '#3a3040', x + u * tw - 0.012, x + u * tw + 0.012, ty0, ty1, z - 0.035);
+        face('wood', wood, x - tw / 2 - 0.07, x - tw / 2, ty0 - 0.07, ty1 + 0.07, z - 0.045); face('wood', wood, x + tw / 2, x + tw / 2 + 0.07, ty0 - 0.07, ty1 + 0.07, z - 0.045);
+        face('wood', wood, x - tw / 2, x + tw / 2, ty0 - 0.07, ty0, z - 0.045); face('wood', wood, x - tw / 2, x + tw / 2, ty1, ty1 + 0.07, z - 0.045);
+        this.glow(x, ty0 + 0.15, z - 0.1, 0.7, '#ffcf8a', 0.5);
+      }
     } else {
-      this.box('wood', P.woodD, x - w / 2 - 0.12, x - w / 2, 0, h + 0.12, z - 0.04, z + 0.3);
-      this.box('wood', P.woodD, x + w / 2, x + w / 2 + 0.12, 0, h + 0.12, z - 0.04, z + 0.3);
-      this.box('wood', P.woodD, x - w / 2, x + w / 2, h, h + 0.12, z - 0.04, z + 0.3);
+      // tent: a gold rod with a valance over the flaps
+      face('wood', '#ffcf4a', x - w / 2 - 0.1, x + w / 2 + 0.1, h, h + 0.06, z - 0.05);
+      face(ONE_SIDED, '#a3122a', x - w / 2 - 0.1, x + w / 2 + 0.1, h - 0.22, h, z - 0.06);
     }
-    // door mat
-    this.box('canvas', '#8a3a4a', x - 0.55, x + 0.55, 0, 0.015, z - 0.85, z - 0.1);
-    // doorway nook is walkable
-    this.extra.push({ x0: x - w / 2 + 0.05, x1: x + w / 2 - 0.05, z0: z - 0.5, z1: z + 0.25 });
-    return new THREE.Vector3(x, h / 2, z + 0.1);
+    // the two leaves (own meshes, hinged at the jambs)
+    const door = new RoomDoor();
+    const lw = w / 2;
+    for (const sd of [-1, 1] as const) {
+      const b = new Batch(1000);
+      // local frame: hinge at x = 0, the leaf spans 0 … −sd·lw (towards the middle), plane z = 0, facing −Z
+      const X = (u: number) => -sd * u;   // u: distance from the hinge
+      const f = (mat: MatKey | typeof ONE_SIDED, col: string, u0: number, u1: number, y0: number, y1: number, dz: number) => face(mat, col, Math.min(X(u0), X(u1)), Math.max(X(u0), X(u1)), y0, y1, dz, b);
+      if (curtain) {
+        f(ONE_SIDED, sd < 0 ? '#a3122a' : '#8e0f24', 0, lw + 0.02, 0, h - 0.2, 0);
+        for (let k = 1; k < 4; k++) f(ONE_SIDED, '#6e0c1e', lw * k / 4 - 0.015, lw * k / 4 + 0.015, 0, h - 0.2, -0.012);
+        f(ONE_SIDED, '#ffcf4a', lw - 0.07, lw - 0.02, 0, h - 0.2, -0.014);
+        f('metal', '#ffcf4a', lw * 0.55 - 0.03, lw * 0.55 + 0.03, 1.0, 1.4, -0.02);   // tie-back tassel
+      } else {
+        const leaf = '#7a4626', panel = '#93592f';
+        f('wood', leaf, 0, lw, 0, h, 0);
+        f('wood', panel, 0.1, lw - 0.1, 0.16, 1.02, -0.015);                    // lower raised panel
+        f('wood', leaf, 0.16, lw - 0.16, 0.24, 0.94, -0.025);                   // its fielded centre
+        f('emit', '#ffc98a', 0.14, lw - 0.14, 1.3, h - 0.2, -0.012);            // lit glass light (street lamps behind)
+        f('wood', panel, 0.1, lw - 0.1, 1.24, 1.3, -0.02); f('wood', panel, 0.1, lw - 0.1, h - 0.2, h - 0.14, -0.02);
+        f('wood', panel, 0.1, 0.14, 1.24, h - 0.14, -0.02); f('wood', panel, lw - 0.14, lw - 0.1, 1.24, h - 0.14, -0.02);
+        f('wood', panel, lw / 2 - 0.018, lw / 2 + 0.018, 1.3, h - 0.2, -0.022); // glazing bar
+        f('wood', panel, 0.14, lw - 0.14, (1.3 + h - 0.2) / 2 - 0.018, (1.3 + h - 0.2) / 2 + 0.018, -0.022);
+        for (const y of [0.32, h - 0.42]) { f('metal', '#2e2a36', 0, 0.42, y, y + 0.07, -0.03); f('metal', '#2e2a36', 0.36, 0.46, y - 0.02, y + 0.09, -0.032); }   // iron hinge straps
+        f('metal', '#2e2a36', lw - 0.13, lw - 0.06, 0.98, 1.16, -0.03);         // handle plate
+        f('metal', '#c9a24a', lw - 0.115, lw - 0.075, 0.9, 1.0, -0.036);        // brass ring
+      }
+      const g = new THREE.Group(); g.name = 'room:door:leaf';
+      for (const m of b.build(this.mats as unknown as Record<string, THREE.Material>, { receiveShadow: () => true })) { m.name = 'room:door:' + (sd < 0 ? 'l' : 'r'); g.add(m); this.owned.push(m.geometry); }
+      g.position.set(x + sd * lw, 0, z - 0.02);
+      this.root.add(g);
+      door.leaves.push({ pivot: g, sign: sd });
+    }
+    this.door = door;
+    // doormat (stacked floor decals: it lies on top of a rug or runner that reaches the door)
+    this.floorBox('canvas', '#8a3a4a', x - 0.55, x + 0.55, z - 0.85, z - 0.15);
+    this.floorBox('canvas', '#b4533c', x - 0.45, x + 0.45, z - 0.75, z - 0.25);
+    // the doorway nook is not walkable any more (closed door); the TP camera still passes the one-sided wall
+    return new THREE.Vector3(x, h / 2, z - 0.05);
   }
 
   /* ------------------------------------------------------------ queries */

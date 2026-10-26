@@ -159,11 +159,15 @@ export async function startGame(site: SiteSession, status: (s: string) => void):
     const veil = (title: string | null) => { if (title) veilEl.textContent = title + '…'; veilEl.style.opacity = title ? '1' : '0'; };
 
     /* ---- UI ---- */
+    // scene mode (a room with a stage, src/core/rooms.ts): the cursor is free on purpose — the UI must not ask to
+    // «click to return», nor show the crosshair or pause when the lock goes
+    let sceneMode = () => false;
+    const uiInput = Object.create(input, { locked: { get: () => input.locked || sceneMode() } }) as typeof input;
     const uiHost: UiHost & Record<string, unknown> = {
-      store, actions: site.actions, input,
+      store, actions: site.actions, input: uiInput,
       onMenu: (fn) => { menuFns.add(fn); return () => menuFns.delete(fn); },
       setCameraMode: () => { /* camera feature */ },
-      getCameraMode: () => state.mode,
+      getCameraMode: () => (sceneMode() ? 'tp' : state.mode),
       setQuality: (q) => engine.setQuality(q),
       exitToClassic: () => ctx.game.toClassic(),
       focusTarget: () => interact.focus(),
@@ -176,7 +180,7 @@ export async function startGame(site: SiteSession, status: (s: string) => void):
         return typeof w.mapImage === 'function' ? w.mapImage(engine.renderer) : Promise.reject(new Error('no map image'));
       },
       walkTo: (x: number, y: number) => { if (!state.inRoom) ctl.walkTo(x, y); },
-      get pauseOnUnlock() { return !state.overlayOver3d; },
+      get pauseOnUnlock() { return !state.overlayOver3d && !sceneMode(); },
     };
     let promptOverride: string | null = null;
 
@@ -185,6 +189,8 @@ export async function startGame(site: SiteSession, status: (s: string) => void):
       // a text field (also inside the UI's shadow root: the chat) owns its keys, Esc included (it blurs the field)
       const src = typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target;
       if (isTyping(src instanceof Element ? src : null)) return false;
+      // Esc closes the topmost DOM card / window first (input modal stack: mine cards, shop card…)
+      if (code === 'Escape' && input.closeTopModal()) return true;
       for (const id of registries.keys.ids()) {
         const b = registries.keys.get(id)!;
         if (b.code !== code) continue;
@@ -238,6 +244,7 @@ export async function startGame(site: SiteSession, status: (s: string) => void):
       toast: (t, bad) => ui.toast(t, bad),
     };
     const rooms = createRoomManager(roomHost);
+    sceneMode = () => !!rooms.stage;
 
     /* ---- context ---- */
     const ctx: CoreContext = {
@@ -320,7 +327,7 @@ export async function startGame(site: SiteSession, status: (s: string) => void):
         if (moved && t - sentAt > 0.1) { site.moveTo(ctl.x, ctl.y); sentAt = t; }
       }
       me.speed = ctl.speed;
-      me.face = state.mode === 'fp' && !state.menu ? rig.yaw : ctl.face;
+      me.face = state.mode === 'fp' && !state.menu && !rooms.stage ? rig.yaw : ctl.face;
       // 3. others
       site.tick(dt);
       // 4. me
@@ -334,7 +341,7 @@ export async function startGame(site: SiteSession, status: (s: string) => void):
       rig.follow(feet, EYE, ctl.airborne);
       if (gameplay) vm.update(dt, t, ctl.speed / 230, l);
       rig.update(dt);
-      const fpNow = rig.distance < 0.9;
+      const fpNow = rig.distance < 0.9 && !rooms.stage;   // scene mode: the hero is always shown
       if (fpNow !== fpShown) { fpShown = fpNow; meAv.setFirstPerson(fpNow); }
       const vmOn = fpNow && !state.menu && (!state.overlay || state.overlayOver3d);
       if (vmOn !== vmShown) { vmShown = vmOn; vm.setVisible(vmOn); }

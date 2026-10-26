@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three';
 import { BRIDGE_HUMP } from '../ground';
+import { flipped } from '../batch';
 import { PB, rbox, box, cyl, sph, cone, torus, capsule, lathe, slab, type PropPart } from './build';
 
 const PI = Math.PI;
@@ -94,7 +95,7 @@ function chest(): PropPart[] {
   b.add('wood', rbox(0.72, 0.4, 0.46, 0.04), PC.woodR, { p: [0, 0.2, 0], swap: true });
   b.add('wood', cyl(0.23, 0.23, 0.72, 12, false, 0, PI), PC.woodR, { p: [0, 0.4, 0], r: [0, 0, PI / 2], uv: 0.7 });
   for (const x of [-0.26, 0.26]) {
-    b.add('metal', rbox(0.045, 0.405, 0.475, 0.01), PC.gold, { p: [x, 0.2, 0] });
+    b.add('metal', rbox(0.045, 0.416, 0.475, 0.01), PC.gold, { p: [x, 0.2, 0] });
     b.add('metal', torus(0.232, 0.02, 4, 14, PI), PC.gold, { p: [x, 0.4, 0], r: [0, PI / 2, 0] });
   }
   b.add('metal', rbox(0.74, 0.04, 0.48, 0.015), PC.gold, { p: [0, 0.4, 0] });
@@ -187,6 +188,8 @@ function statue(): PropPart[] {
   // body + cape
   b.add('stone', capsule(0.24, 0.3, 3, 10), M, { p: [0, y0 + 0.62, 0], s: [1, 1, 0.85] });
   b.add('stone', cyl(0.22, 0.42, 0.75, 8, true, PI * 0.6, PI * 0.8), PC.marbleD, { p: [0, y0 + 0.5, -0.02] });
+  // its inner side (an open shell: seen from behind/below the statue it was see-through)
+  b.add('stone', flipped(cyl(0.205, 0.405, 0.75, 8, true, PI * 0.6, PI * 0.8)), PC.marbleD, { p: [0, y0 + 0.5, -0.02] });
   b.add('stone', torus(0.22, 0.04, 5, 14), PC.marbleD, { p: [0, y0 + 0.86, 0], r: [PI / 2, 0, 0], s: [1, 0.85, 1] });
   // head
   b.add('stone', sph(0.38, 14, 9), M, { p: [0, y0 + 1.25, 0], s: [1.1, 0.92, 1] });

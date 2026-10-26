@@ -8,6 +8,11 @@
  *    (menus handle their own hotkeys with their own listeners);
  *  - Ctrl/Meta/Alt chords are never treated as game keys (browser shortcuts stay intact).
  * Held keys are released on window blur, tab hide, focusing a text field and Ctrl/Alt/Meta chords.
+ *
+ * Modal stack: every DOM card / window we open over the game (mine cards and journal, the shop buy card…) calls
+ * pushModal(id, close) and popModal(id) when it goes. While any modal is open, gameplay reads false whatever
+ * setGameplay() says (nobody can switch it back on from under a card), lock() is refused (a click never grabs the
+ * pointer), and closeTopModal() — Esc in the integrator — closes the topmost one first.
  */
 import type { Unsub } from '../contracts';
 import type { Input } from '../contracts/modules';
@@ -18,6 +23,14 @@ export interface InputEx extends Input {
   readonly jump: boolean;
   /** True once per Space press (pressed within the last 250 ms and not consumed yet). */
   consumeJump(): boolean;
+  /** Open a modal (idempotent per id): gameplay off, pointer released and never re-grabbed until every modal is gone. */
+  pushModal(id: string, close?: () => void): void;
+  /** The modal `id` went away (idempotent). */
+  popModal(id: string): void;
+  /** Ids of the open modals, bottom → top. */
+  readonly modals: readonly string[];
+  /** Close the topmost modal through its close callback (Esc). False when none is open or it has no callback. */
+  closeTopModal(): boolean;
 }
 
 const JUMP = 'Space';
@@ -51,7 +64,10 @@ export function createInput(target: HTMLElement): InputEx {
   const look = { dx: 0, dy: 0 };
   const lookOut = { dx: 0, dy: 0 };
   let wheel = 0;
-  let gameplay = true;
+  let gameplay = true;       // effective: base && no modal
+  let base = true;           // what setGameplay() asked for
+  const modalList: { id: string; close?: () => void }[] = [];
+  const modalIds: string[] = [];
   let locked = false;
   let lastLockReq = 0;
   let dropNext = 0;          // drop the first events after lock (Chrome sends a jump)
@@ -70,6 +86,13 @@ export function createInput(target: HTMLElement): InputEx {
   }
 
   function releaseAll(): void { down.clear(); move.x = 0; move.y = 0; jumpAt = -1; }
+  function sync(): void {
+    const eff = base && modalList.length === 0;
+    if (eff === gameplay) return;
+    gameplay = eff;
+    if (!eff) { releaseAll(); look.dx = 0; look.dy = 0; } else recompute();
+  }
+  function unlockNow(): void { try { if (document.pointerLockElement === target) document.exitPointerLock(); } catch { /* */ } locked = false; }
 
   function onKeyDown(e: KeyboardEvent): void {
     const code = e.code;
@@ -157,7 +180,7 @@ export function createInput(target: HTMLElement): InputEx {
       return () => { const i = keyFns.indexOf(fn); if (i >= 0) keyFns.splice(i, 1); };
     },
     lock() {
-      if (locked) return;
+      if (locked || modalList.length) return;
       const now = performance.now();
       // Chrome refuses re-lock for ~1 s after the user left the lock with Esc
       if (now - lastLockReq < 250) return;
@@ -175,14 +198,34 @@ export function createInput(target: HTMLElement): InputEx {
         try { target.requestPointerLock(); } catch { /* */ }
       }
     },
-    unlock() { if (document.pointerLockElement === target) document.exitPointerLock(); locked = false; },
+    unlock() { unlockNow(); },
     get locked() { return locked; },
-    setGameplay(on) {
-      if (gameplay === on) return;
-      gameplay = on;
-      if (!on) { releaseAll(); look.dx = 0; look.dy = 0; } else recompute();
-    },
+    setGameplay(on) { base = on; sync(); },
     get gameplay() { return gameplay; },
+    pushModal(id, close) {
+      const i = modalIds.indexOf(id);
+      if (i >= 0) { modalList[i].close = close ?? modalList[i].close; return; }
+      modalList.push({ id, close }); modalIds.push(id);
+      unlockNow(); sync();
+    },
+    popModal(id) {
+      const i = modalIds.indexOf(id);
+      if (i < 0) return;
+      modalList.splice(i, 1); modalIds.splice(i, 1);
+      sync();
+    },
+    get modals() { return modalIds; },
+    closeTopModal() {
+      for (let i = modalList.length - 1; i >= 0; i--) {
+        const m = modalList[i];
+        if (!m.close) continue;
+        try { m.close(); } catch (e) { console.error('[l3d] modal close', m.id, e); }
+        // a close callback that forgot to pop: pop it here so Esc never gets stuck
+        const k = modalIds.indexOf(m.id); if (k >= 0) { modalList.splice(k, 1); modalIds.splice(k, 1); sync(); }
+        return true;
+      }
+      return false;
+    },
     dispose() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);

@@ -173,6 +173,21 @@ export function gablePrism(): THREE.BufferGeometry {
   g.computeVertexNormals();
   return g;
 }
+/** The gable prism with reversed winding: the dark underside layer of a roof, facing down (seen from under the eaves). */
+export function gableUnder(): THREE.BufferGeometry { return flipped(gablePrism()); }
+/** Reversed-winding copy of a geometry (its inner side; non-indexed). */
+export function flipped(src: THREE.BufferGeometry): THREE.BufferGeometry {
+  const g = src.index ? src.toNonIndexed() : src.clone();
+  for (const name of Object.keys(g.attributes)) {
+    if (name === 'normal') continue;
+    const at = g.attributes[name] as THREE.BufferAttribute, n = at.itemSize;
+    for (let i = 0; i < at.count; i += 3) for (let c = 0; c < n; c++) {
+      const v = at.getComponent(i + 1, c); at.setComponent(i + 1, c, at.getComponent(i + 2, c)); at.setComponent(i + 2, c, v);
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+}
 /** Gable end triangles (wall material), same local frame as gablePrism. */
 export function gableEnds(): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
@@ -210,4 +225,4 @@ export function archWallGeo(w: number, h: number, ow: number, oh: number, seg = 
   return g;
 }
 
-export const GEO2 = { gable: gablePrism(), gableEnds: gableEnds(), shed: shedPrism(), arch: archSlab() };
+export const GEO2 = { gable: gablePrism(), gableUnder: gableUnder(), gableEnds: gableEnds(), gableEndsIn: flipped(gableEnds()), shed: shedPrism(), arch: archSlab() };

@@ -33,7 +33,7 @@ describe('world solidTop', () => {
     const fence = k.inst.placed.get('fence')!.find((p) => p.x > 15)!;
     const t = at(fence.x, fence.z);
     expect(t).toBeGreaterThan(0.5); expect(t).toBeLessThanOrEqual(0.8);
-    for (let y = 1100; y <= 1136; y += 4) expect(top(1600, y), 'y=' + y).toBe(-Infinity);
+    for (let y = 1100; y <= 1136; y += 4) expect(top(1800, y), 'y=' + y).toBe(-Infinity);   // (right of the mine cliff)
     expect(top(1600, 1050)).toBe(-Infinity);          // open street
   });
   it('fountain rim is standable, its basin is not', () => {

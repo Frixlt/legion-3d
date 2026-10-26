@@ -13,7 +13,14 @@
  * 'hybrid': after the 3D scene is up, the site's panel for the building opens over it (html.l3d-room3d makes the
  * site's room transparent except the header and the panel). Leaving through the site's «Выйти» exits the room too
  * (the overlay watcher calls exit() when the panel disappears).
+ *
+ * Scene mode: a room scene may carry a `stage` (SceneStage — hybrid rooms do). While such a room is active,
+ * `rooms.stage` is non-null and the game runs in "scene mode": the mouse stays free (no pointer lock, clicks pick
+ * what is under the cursor), the camera is a cinematic third-person shot of the hero standing in front of the
+ * stage's focus (NPC / station) framed in the half of the screen the site panel leaves free
+ * (src/features/camera.ts, src/features/controls.ts).
  */
+import type * as THREE from 'three';
 import type { Building, Unsub } from '../contracts';
 import type { GameContext, Interactable, RoomContext, RoomManager, RoomScene } from '../contracts/ext';
 import type { Registries } from './registries';
@@ -33,6 +40,23 @@ export interface RoomHost {
   toast(text: string, bad?: boolean): void;
 }
 
+/** Cinematic framing data of a room (hybrid rooms): what the scene-mode camera looks at. Room-local metres. */
+export interface SceneStage {
+  /** Point of interest: the NPC / station (centre, y = height of interest). */
+  focus: { x: number; y: number; z: number };
+  /** Where the hero stands, facing the focus (Walker.face convention: 0 looks to −Z). Also the room's spawn. */
+  stand: { x: number; z: number; face: number };
+  /** Side the site panel is docked on: the camera frames the hero in the other half of the screen. */
+  side: 'left' | 'right' | 'full';
+  /** The room interactable under a world ray (free-cursor click / hover), or null. */
+  pick?(ray: THREE.Ray): Interactable | null;
+}
+/** The stage a room scene carries (duck-typed extra field of RoomScene), or null. */
+export function stageOf(sc: RoomScene | null | undefined): SceneStage | null {
+  const st = sc ? (sc as RoomScene & { stage?: SceneStage }).stage : undefined;
+  return st && st.focus && st.stand ? st : null;
+}
+
 export interface RoomManagerEx extends RoomManager {
   /** Kind of the active room ('shop3d' | 'hybrid' | 'mine3d' | …) or null. */
   readonly kind: string | null;
@@ -41,6 +65,8 @@ export interface RoomManagerEx extends RoomManager {
   readonly panel: boolean;
   /** An enter() is in progress (scene loading). */
   readonly busy: boolean;
+  /** Stage of the active room = scene mode is on (free cursor, cinematic camera), or null. */
+  readonly stage: SceneStage | null;
   /** Per-frame room update (core calls it instead of world.update while a room is active). */
   update(dt: number, t: number, camera: import('three').Camera): void;
   onChange(fn: (current: string | null) => void): Unsub;
@@ -58,6 +84,8 @@ export function createRoomManager(host: RoomHost): RoomManagerEx {
   const frameFns: ((dt: number, t: number) => void)[] = [];
   const emit = () => { for (const f of [...subs]) { try { f(current); } catch (e) { console.error('[l3d] rooms listener', e); } } };
 
+  // the city client must not send go while we are inside (a throttled pending go landed in the mine → 429)
+  const pauseMoves = (on: boolean) => { try { (host.ctx.site as { pauseMoves?(on: boolean): void } | undefined)?.pauseMoves?.(on); } catch { /* */ } };
   const fallbackSite = (id: string, why?: unknown) => {
     if (why) console.warn(`[l3d] room for "${id}" failed, opening the site's screen`, why);
     host.openSite(id);
@@ -92,6 +120,7 @@ export function createRoomManager(host: RoomHost): RoomManagerEx {
     get scene() { return scene; },
     get panel() { return panel; },
     get busy() { return busy; },
+    get stage() { return stageOf(scene); },
 
     async enter(id) {
       if (busy || current === id) return;
@@ -104,6 +133,7 @@ export function createRoomManager(host: RoomHost): RoomManagerEx {
       if (!roomDef || !b) { fallbackSite(id); return; }
       const my = ++seq;
       busy = true;
+      pauseMoves(true);
       host.veil(roomDef.title ?? b.title);
       const ctx = makeCtx(b);
       let sc: RoomScene;
@@ -112,6 +142,7 @@ export function createRoomManager(host: RoomHost): RoomManagerEx {
       } catch (e) {
         busy = false; host.veil(null);
         for (const u of owned) u(); owned = [];
+        pauseMoves(false);
         fallbackSite(id, e);
         return;
       }
@@ -127,6 +158,7 @@ export function createRoomManager(host: RoomHost): RoomManagerEx {
         try { sc.dispose(); } catch { /* */ }
         for (const u of owned) u(); owned = [];
         host.veil(null);
+        pauseMoves(false);
         fallbackSite(id, e);
         return;
       }
@@ -139,13 +171,14 @@ export function createRoomManager(host: RoomHost): RoomManagerEx {
     exit() {
       seq++;   // cancels a pending enter
       if (busy) { busy = false; host.veil(null); }
-      if (!current) return;
+      if (!current) { pauseMoves(false); return; }
       const b = host.building(current);
       const sc = scene;
       if (panel) { panel = false; host.hidePanel(); }
       for (const u of owned) { try { u(); } catch { /* */ } }
       owned = []; frameFns.length = 0;
       scene = null; current = null; kind = null;
+      pauseMoves(false);   // before setSpace: it sends the street position once
       host.setSpace(null, b ? { x: b.door.x, y: b.door.y, face: Math.PI } : undefined);
       try { sc?.dispose(); } catch (e) { console.error('[l3d] room dispose', e); }
       emit();

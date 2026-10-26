@@ -10,6 +10,7 @@ import { hitPlane } from '../common/kit';
 import { bunting, stringLights, wallLamp, potPlant, candle, books, painting, mug, sack, stool, cloth, basket, roundRug, dot, brazier, wallShelf, patternRug } from '../common/decor';
 import { M } from '../../world/batch';
 import { AnvilFx, hookSiteForge } from './anvil';
+import { faceTo } from '../common/npc';
 
 export interface DeskBox { x: number; y: number; z: number; w: number; h: number; d: number }
 export interface HybridSpec {
@@ -17,6 +18,8 @@ export interface HybridSpec {
   /** Prompt verb for the desk, e.g. «Навыки у тренера». */
   verb?: string;
   autoOpen?: boolean;
+  /** Scene-mode framing: focus point (default: the desk box centre) and the hero's distance from it (default 1.8 m). */
+  stage?: { focus?: [number, number, number]; dist?: number };
   build(R: RoomBase, env: RoomEnv): DeskBox | null;
 }
 
@@ -73,8 +76,8 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       const K = R.kit, P = R.pal, W = 10, D = 8, H = 3.8;
       R.bg = '#1a1420';
       K.shell({ w: W, d: D, h: H, wall: 'brick', wallCol: P.brick, wainscot: P.woodD, floor: 'wood', floorCol: '#a07450', ceiling: 'beams' });
-      K.geo('canvas', new THREE.CylinderGeometry(2.6, 2.6, 0.02, 40), new THREE.Matrix4().makeTranslation(0.6, 0.012, -0.6), '#e2c58a');
-      K.geo('canvas', new THREE.TorusGeometry(2.6, 0.05, 4, 48).rotateX(Math.PI / 2), new THREE.Matrix4().makeTranslation(0.6, 0.02, -0.6), '#a3122a');
+      K.floorDisc('canvas', '#e2c58a', 0.6, -0.6, 2.6);
+      K.geo('canvas', new THREE.TorusGeometry(2.6, 0.05, 4, 48).rotateX(Math.PI / 2), new THREE.Matrix4().makeTranslation(0.6, 0.03, -0.6), '#a3122a');
       K.prop('dummy', 1.6, 0, -1.6, -0.3, 1.0); K.prop('dummy', 0.2, 0, -2.4, 0.2, 1.0); K.prop('dummy', 2.4, 0, -0.2, -0.8, 1.0);
       // weapon racks on the right wall
       const F = new Frame(W / 2, -1.0, -Math.PI / 2);
@@ -103,7 +106,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       wallLamp(K, -W / 2, 2.1, -3.4, Math.PI / 2, { real: 2 });
       potPlant(K, -W / 2 + 0.45, 0, D / 2 - 0.45, 1.1, '#ffcf4a'); K.solid(-W / 2, -W / 2 + 0.7, D / 2 - 0.7, D / 2, 0.6);
       // practice swords in a rack by the front-left wall, shields leaning, a pyramid of sandbags, a pennant row
-      K.box('wood', P.woodD, -W / 2 + 0.05, -W / 2 + 0.35, 0.0, 0.9, 1.8, 3.0); K.box('wood', P.woodL, -W / 2 + 0.05, -W / 2 + 0.4, 0.9, 0.96, 1.75, 3.05);
+      K.box('wood', P.woodD, -W / 2 + 0.05, -W / 2 + 0.35, 0.0, 0.9, 1.8, 3.0); K.box('wood', P.woodL, -W / 2 + 0.07, -W / 2 + 0.4, 0.9, 0.975, 1.75, 3.05);
       for (let i = 0; i < 6; i++) K.rbox('wood', i % 2 ? '#c9884a' : '#a8754f', -W / 2 + 0.22, 1.25, 1.95 + i * 0.19, 0.04, 0.9, 0.06, 0, 0, 0.12);
       K.solid(-W / 2, -W / 2 + 0.45, 1.75, 3.05, Infinity);
       for (const [x, z, c] of [[-3.7, -2.95, '#a3122a'], [-3.35, -3.1, '#3a6aa8']] as const) K.geo('wood', DISCZ, M(x, 0.42, z, 0.8, 0.8, 1, -0.25, 0, 0), c);
@@ -117,7 +120,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       { const cx = 0.6, cz = -0.6, r = 2.2, P4: [number, number][] = [[cx - r, cz - r], [cx + r, cz - r], [cx + r, cz + r], [cx - r, cz + r]];
         for (const [x, z] of P4) { K.cyl('wood', '#ffcf4a', x, 0, z, 0.07, 1.25, 8); K.ball('canvas', '#a3122a', x, 1.3, z, 0.1); K.solid(x - 0.1, x + 0.1, z - 0.1, z + 0.1, Infinity, false); }
         for (let i = 0; i < 4; i++) { const [ax, az] = P4[i], [bx2, bz2] = P4[(i + 1) % 4]; if (i === 2) continue; for (const [y, c] of [[0.7, '#f2ead8'], [1.05, '#a3122a']] as const) K.box('canvas', c, Math.min(ax, bx2) - 0.02, Math.max(ax, bx2) + 0.02, y, y + 0.035, Math.min(az, bz2) - 0.02, Math.max(az, bz2) + 0.02); } }
-      R.npc({ seed: 'Тренер', name: 'Тренер', x: -1.6, z: -1.2, face: 0.5, look: { hat: 'bandana', shape: 'box', color: '#ff9a6a' }, gear: { w: 'gladius', s: 'round' },
+      R.npc({ seed: 'Тренер', name: 'Тренер', x: -1.6, z: -1.2, face: faceTo(-1.6, -1.2, -0.6, D / 2 - 0.9), look: { hat: 'bandana', shape: 'box', color: '#ff9a6a' }, gear: { w: 'gladius', s: 'round' },
         hello: ['Встань в стойку, {n}! Покажу пару приёмов.', 'Навыки сами себя не выучат!', 'Заходи, разомнём лапы.'], lines: ['Удар, блок, ещё удар!', 'Очки навыков — не копи, учись!'], emote: { anim: 'swing', every: 6 } });
       R.exitDoor();
       R.spawn = { x: -0.6, z: D / 2 - 0.9, face: 0 };
@@ -158,7 +161,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       roundRug(K, tx, tz, 1.3, '#a3122a', '#ffcf4a');
       K.box('wood', P.woodD, tx - 0.6, tx + 0.6, 0, 0.72, tz - 0.35, tz + 0.35); K.box('wood', P.woodL, tx - 0.65, tx + 0.65, 0.72, 0.78, tz - 0.4, tz + 0.4); K.solid(tx - 0.65, tx + 0.65, tz - 0.4, tz + 0.4, 0.78);
       books(K, tx - 0.5, tx - 0.05, 0.78, tz - 0.2, 0.18, 2); candle(K, tx + 0.3, 0.78, tz + 0.05); mug(K, tx + 0.5, 0.78, tz - 0.2, '#7fb0e8');
-      K.rbox('flat', '#fff8ec', tx + 0.05, 0.785, tz + 0.1, 0.35, 0.004, 0.26, 0.2);
+      K.rbox('flat', '#fff8ec', tx + 0.05, 0.79, tz + 0.1, 0.35, 0.004, 0.26, 0.2);
       stool(K, tx, tz + 0.75, '#a3122a'); stool(K, tx + 0.95, tz, '#3a6aa8');
       K.light(tx, 1.6, tz, '#ffd9a0', 3, 4, 0, 2);
       wallShelf(K, -W / 2, 2.6, 0.5, Math.PI / 2, 2.6, 'books');
@@ -172,7 +175,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       potPlant(K, W / 2 - 0.45, 0, D / 2 - 0.45, 1.1, '#ff8fa3'); K.solid(W / 2 - 0.7, W / 2, D / 2 - 0.7, D / 2, 0.6);
       stringLights(K, -W / 2 + 0.2, H - 0.3, -D / 2 + 0.3, W / 2 - 0.2, H - 0.3, D / 2 - 0.5, 14, undefined, 0.35, 0.55);
       bunting(K, -W / 2 + 0.1, H - 0.25, 0.6, W / 2 - 0.1, H - 0.25, 0.6, 12, ['#ffcf4a', '#a3122a', '#5a9a4a', '#7fb0e8'], 0.3);
-      R.npc({ seed: 'Глашатай', name: 'Глашатай', x: -2.5, z: -2.3, face: 0.4, look: { hat: 'beret', shape: 'egg', color: '#9fe39a', acc: ['scarf'] },
+      R.npc({ seed: 'Глашатай', name: 'Глашатай', x: -2.5, z: -2.3, face: faceTo(-2.5, -2.3, -0.6, D / 2 - 0.9), look: { hat: 'beret', shape: 'egg', color: '#9fe39a', acc: ['scarf'] },
         hello: ['Свежие новости, {n}! Только что с печи.', 'Читай, читай — всё самое важное здесь.'], lines: ['Слыхал? В шахте нашли самоцвет!'], emote: { anim: 'wave', every: 14 } });
       R.exitDoor();
       R.spawn = { x: -0.6, z: D / 2 - 0.9, face: 0 };
@@ -187,12 +190,12 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       R.bg = '#18142a';
       K.shell({ w: W, d: D, h: H, wall: 'plaster', wallCol: '#e8d4b0', wainscot: '#6a2a3a', floor: 'lowPaving', floorCol: '#c8b8a8', ceiling: 'flat', ceilCol: '#5a3a5a', door: { x: 0, w: 1.6, h: 2.6 } });
       for (const x of [-3.6, 3.6]) for (const z of [-2.4, 0.4, 2.6]) { K.cyl('stone', '#efe2cc', x, 0, z, 0.22, H, 16); K.box('stone', '#d8c8b0', x - 0.3, x + 0.3, 0, 0.2, z - 0.3, z + 0.3); K.box('stone', '#d8c8b0', x - 0.3, x + 0.3, H - 0.25, H, z - 0.3, z + 0.3); K.solid(x - 0.3, x + 0.3, z - 0.3, z + 0.3, Infinity); }
-      K.box('canvas', '#a3122a', -0.8, 0.8, 0, 0.015, -D / 2, D / 2 - 0.2); K.box('canvas', '#ffcf4a', -0.85, -0.8, 0, 0.016, -D / 2, D / 2 - 0.2); K.box('canvas', '#ffcf4a', 0.8, 0.85, 0, 0.016, -D / 2, D / 2 - 0.2);
+      K.floorBox('canvas', '#a3122a', -0.8, 0.8, -D / 2, D / 2 - 0.2); K.floorBox('canvas', '#ffcf4a', -0.85, -0.8, -D / 2, D / 2 - 0.2); K.floorBox('canvas', '#ffcf4a', 0.8, 0.85, -D / 2, D / 2 - 0.2);
       // desk on the right of the centre (panel on the left)
       const C = new Frame(1.6, -D / 2, 0);
       counter(R, C, -1.3, 1.3, 1.4, 2.1, '#6a2a3a', P.woodL);
       for (let i = 0; i < 4; i++) K.box('back', ['#a3122a', '#3a6aa8', '#5a9a4a', '#c9884a'][i], 0.7 + i * 0.12, 0.8 + i * 0.12, COUNTER_TOP, COUNTER_TOP + 0.25, -D / 2 + 1.6, -D / 2 + 1.85);
-      K.box('flat', '#fff8ec', 1.6, 2.1, COUNTER_TOP + 0.001, COUNTER_TOP + 0.005, -D / 2 + 1.55, -D / 2 + 1.9);
+      K.box('flat', '#fff8ec', 1.6, 2.1, COUNTER_TOP + 0.007, COUNTER_TOP + 0.011, -D / 2 + 1.55, -D / 2 + 1.9);
       banner(R, -2.6, -D / 2, '#a3122a', '#ffcf4a', 2.0); banner(R, 2.6, -D / 2, '#a3122a', '#ffcf4a', 2.0);
       K.sign(env.building.title || 'Ратуша', 0, 3.4, -D / 2 + 0.05, 2.6);
       K.box('wood', P.woodD, -0.7, 0.7, 1.4, 2.9, -D / 2, -D / 2 + 0.1); K.ball('emit', '#ffcf4a', 0, 2.2, -D / 2 + 0.1, 0.35, 0.2);
@@ -213,14 +216,14 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       for (let i = 0; i < 7; i++) K.box('back', ['#9fe35a', '#7fb0e8', '#c9884a'][i % 3], W / 2 - 0.09, W / 2 - 0.08, 1.3 + (i % 3) * 0.35, 1.5 + (i % 3) * 0.35, 2.6 + Math.floor(i / 3) * 0.35, 2.9 + Math.floor(i / 3) * 0.35);
       K.sign('Город', W / 2 - 0.1, 2.85, 3.05, 0.9, -Math.PI / 2, { bg: '#6a2a3a', fg: '#fff3dc' });
       wallLamp(K, W / 2, 3.3, 2.45, -Math.PI / 2, { real: 2, pool: 0.9 });
-      for (const z of [-3.0, -1.6]) { K.box('canvas', '#a3122a', W / 2 - 0.04, W / 2 - 0.02, 2.3, 3.9, z - 0.3, z + 0.3); K.box('canvas', '#ffcf4a', W / 2 - 0.05, W / 2 - 0.03, 3.65, 3.75, z - 0.3, z + 0.3); }
+      for (const z of [-3.0, -1.6]) { K.box('canvas', '#a3122a', W / 2 - 0.04, W / 2 - 0.02, 2.3, 3.9, z - 0.3, z + 0.3); K.box('canvas', '#ffcf4a', W / 2 - 0.05, W / 2 - 0.03, 3.65, 3.75, z - 0.31, z + 0.31); }
       potPlant(K, 2.95, 0, -2.4, 1.0, '#ff8fa3'); potPlant(K, -2.95, 0, 0.4, 1.0, '#ffcf4a');
       // the town model on a big table: little houses with coloured roofs, a fountain, the hall itself
       { const mx = 1.9, mz = 0.6;
-        K.box('wood', P.woodD, mx - 0.8, mx + 0.8, 0, 0.75, mz - 0.55, mz + 0.55); K.box('wood', P.woodL, mx - 0.85, mx + 0.85, 0.75, 0.8, mz - 0.6, mz + 0.6); K.box('canvas', '#7aaa4a', mx - 0.78, mx + 0.78, 0.8, 0.81, mz - 0.53, mz + 0.53);
+        K.box('wood', P.woodD, mx - 0.8, mx + 0.8, 0, 0.75, mz - 0.55, mz + 0.55); K.box('wood', P.woodL, mx - 0.85, mx + 0.85, 0.75, 0.8, mz - 0.6, mz + 0.6); K.box('canvas', '#7aaa4a', mx - 0.78, mx + 0.78, 0.8, 0.81, mz - 0.53, mz + 0.53); // the town map (felt) on the table
         for (let i = 0; i < 12; i++) { const x = mx - 0.65 + (i % 6) * 0.26, z = mz - 0.3 + Math.floor(i / 6) * 0.6, h = 0.08 + (i * 7 % 3) * 0.03; K.box('plaster', '#f3dfbd', x - 0.07, x + 0.07, 0.81, 0.81 + h, z - 0.06, z + 0.06); K.cone('roof', ['#e0504a', '#3a6aa8', '#c9884a', '#5a9a4a'][i % 4], x, 0.81 + h, z, 0.1, 0.07, true); }
-        K.box('canvas', '#c8b8a8', mx - 0.78, mx + 0.78, 0.811, 0.813, mz - 0.06, mz + 0.06);
-        K.cyl('stone', '#9fd0ff', mx, 0.81, mz, 0.07, 0.03, 12);
+        K.box('canvas', '#c8b8a8', mx - 0.78, mx + 0.78, 0.81, 0.818, mz - 0.06, mz + 0.06);
+        K.cyl('stone', '#9fd0ff', mx, 0.818, mz, 0.07, 0.03, 12);
         K.solid(mx - 0.85, mx + 0.85, mz - 0.6, mz + 0.6, 0.8);
         K.light(mx, 1.9, mz, '#ffe2b0', 3, 4, 0, 2); }
       K.cyl('back', '#a3122a', 2.35, COUNTER_TOP, -D / 2 + 1.75, 0.06, 0.04, 12); candle(K, 0.55, COUNTER_TOP, -D / 2 + 1.9);
@@ -242,7 +245,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       K.shell({ w: W, d: D, h: H, wall: 'plaster', wallCol: '#7a3a5e', wainscot: '#3a1a2e', floor: 'wood', floorCol: '#a06a44', ceiling: 'beams', ceilCol: '#3a1a2e', door: { x: 0, w: 1.5, h: 2.5 } });
       K.rug(-0.5, 0.5, -1.4, 3.6, '#a3122a', '#ffcf4a');
       // stage + lectern on the right of centre
-      K.box('wood', P.woodD, -0.5, 4.2, 0, 0.35, -D / 2, -D / 2 + 2.2); K.box('wood', '#ffcf4a', -0.5, 4.2, 0.33, 0.37, -D / 2 + 2.15, -D / 2 + 2.22);
+      K.box('wood', P.woodD, -0.5, 4.2, 0, 0.35, -D / 2, -D / 2 + 2.2); K.box('wood', '#ffcf4a', -0.51, 4.21, 0.33, 0.37, -D / 2 + 2.15, -D / 2 + 2.22);
       K.floors.push([-0.5, 4.2, -D / 2, -D / 2 + 2.2, 0.35]);
       K.solid(-0.5, 4.2, -D / 2, -D / 2 + 2.2, 0.35);
       K.box('wood', '#6a2a3a', 1.4, 2.2, 0.35, 1.45, -D / 2 + 1.3, -D / 2 + 1.8); K.box('wood', '#ffcf4a', 1.35, 2.25, 1.45, 1.52, -D / 2 + 1.25, -D / 2 + 1.85);
@@ -276,7 +279,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       // velvet rope in front of the stage (brass posts), a gong, crates of lots waiting to go up
       for (let i = 0; i < 5; i++) { const x = -0.2 + i * 1.05; K.cyl('metal', '#ffcf4a', x, 0, -D / 2 + 2.75, 0.04, 0.9, 8); K.ball('metal', '#ffcf4a', x, 0.94, -D / 2 + 2.75, 0.06); K.solid(x - 0.06, x + 0.06, -D / 2 + 2.69, -D / 2 + 2.81, Infinity, false);
         if (i < 4) for (let j = 1; j < 6; j++) { const t2 = j / 6; dot(K, x + 1.05 * t2, 0.86 - Math.sin(t2 * Math.PI) * 0.18, -D / 2 + 2.75, 0.035, '#a3122a'); } }
-      K.box('wood', P.woodD, 3.3, 3.36, 0.35, 1.9, -D / 2 + 0.6, -D / 2 + 0.66); K.box('wood', P.woodD, 4.0, 4.06, 0.35, 1.9, -D / 2 + 0.6, -D / 2 + 0.66); K.box('wood', P.woodD, 3.3, 4.06, 1.85, 1.92, -D / 2 + 0.58, -D / 2 + 0.68);
+      K.box('wood', P.woodD, 3.3, 3.36, 0.35, 1.9, -D / 2 + 0.6, -D / 2 + 0.66); K.box('wood', P.woodD, 4.0, 4.06, 0.35, 1.9, -D / 2 + 0.6, -D / 2 + 0.66); K.box('wood', P.woodD, 3.29, 4.07, 1.85, 1.92, -D / 2 + 0.58, -D / 2 + 0.68);
       K.geo('metal', DISCZ, M(3.68, 1.25, -D / 2 + 0.63, 0.6, 0.6, 0.6), '#e8b923');
       K.prop('crate', 3.6, 0, 2.6, 0.2, 0.8); K.prop('crate', 3.6, 0.62, 2.6, -0.2, 0.6, { solid: false }); K.prop('chest', 2.7, 0, 3.4, 0.3, 0.9);
       stringLights(K, -W / 2 + 0.2, H - 0.3, -D / 2 + 0.5, W / 2 - 0.2, H - 0.3, -D / 2 + 0.5, 14, ['#ffcf6a', '#ff8fa3'], 0.35, 0.55);
@@ -303,7 +306,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
         F.box(R, 'wood', P.woodD, -1.3, -1.2, 0, 3.4, 0, 0.8); F.box(R, 'wood', P.woodD, 1.2, 1.3, 0, 3.4, 0, 0.8);
         for (let l = 0; l < 3; l++) {
           const y = 0.1 + l * 1.1;
-          F.box(R, 'wood', P.woodL, -1.25, 1.25, y, y + 0.06, 0, 0.8);
+          F.box(R, 'wood', P.woodL, -1.25, 1.25, y, y + 0.06, 0.01, 0.79);
           for (let j = 0; j < 3; j++) { const lx = -0.8 + j * 0.8, s = 0.5 + ((l + j) % 3) * 0.08; const col = ['#c9884a', '#a8754f', '#d9a066'][(l * 3 + j) % 3]; F.box(R, 'wood', col, lx - s / 2, lx + s / 2, y + 0.06, y + 0.06 + s * 0.8, 0.4 - s / 2, 0.4 + s / 2); }
         }
         F.solid(R, -1.3, 1.3, 0, 0.8, Infinity);
@@ -370,21 +373,21 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       // spear rack
       const F = new Frame(W / 2, 0.4, -Math.PI / 2);
       F.box(R, 'wood', P.woodD, -1.0, 1.0, 0.3, 0.4, 0, 0.3);
-      for (let i = 0; i < 5; i++) { const lx = -0.8 + i * 0.4; F.box(R, 'wood', '#8a5a2b', lx - 0.02, lx + 0.02, 0.3, 2.6, 0.12, 0.16); F.box(R, 'metal', '#c4cad3', lx - 0.04, lx + 0.04, 2.6, 2.85, 0.12, 0.16); }
+      for (let i = 0; i < 5; i++) { const lx = -0.8 + i * 0.4; F.box(R, 'wood', '#8a5a2b', lx - 0.02, lx + 0.02, 0.4, 2.6, 0.125, 0.155); F.box(R, 'metal', '#c4cad3', lx - 0.04, lx + 0.04, 2.6, 2.85, 0.12, 0.16); }
       F.solid(R, -1.1, 1.1, 0, 0.35, Infinity);
       K.sign(env.building.title || 'Ворота', gx, 4.28, gz + 0.53, 2.2, 0, { bg: '#3a3448' });
       // lived-in: the guards' table (mugs, cards, a candle), a map of the road, a helmet on a stand, lamps, festoons
       { const tx = 2.6, tz = 0.9;
         K.box('wood', P.woodD, tx - 0.8, tx + 0.8, 0, 0.72, tz - 0.45, tz + 0.45); K.box('wood', P.woodL, tx - 0.85, tx + 0.85, 0.72, 0.78, tz - 0.5, tz + 0.5); K.solid(tx - 0.85, tx + 0.85, tz - 0.5, tz + 0.5, 0.78);
         mug(K, tx - 0.5, 0.78, tz - 0.2); mug(K, tx + 0.3, 0.78, tz + 0.2, '#c9884a'); candle(K, tx, 0.78, tz - 0.1);
-        for (let i = 0; i < 5; i++) K.rbox('flat', i % 2 ? '#fff8ec' : '#ffd2dc', tx - 0.25 + i * 0.07, 0.785, tz + 0.15 + (i % 3) * 0.04, 0.09, 0.003, 0.13, i * 0.4);
+        for (let i = 0; i < 5; i++) K.rbox('flat', i % 2 ? '#fff8ec' : '#ffd2dc', tx - 0.25 + i * 0.07, 0.788 + i * 0.009, tz + 0.15 + (i % 3) * 0.04, 0.09, 0.003, 0.13, i * 0.4);   // a fanned stack, 9 mm apart
         K.rbox('flat', '#e2c58a', tx + 0.45, 0.786, tz - 0.05, 0.4, 0.003, 0.3, 0.3);
-        stool(K, tx - 1.1, tz, '#5a5470'); stool(K, tx + 1.1, tz + 0.1, '#5a5470'); stool(K, tx, tz + 0.85, '#5a5470'); }
+        stool(K, tx - 1.13, tz, '#5a5470'); stool(K, tx + 1.1, tz + 0.1, '#5a5470'); stool(K, tx, tz + 0.85, '#5a5470'); }
       painting(K, -W / 2, 2.2, 0.4, Math.PI / 2, 1.4, 1.0, ['#9fe35a', '#e2c58a', '#7fb0e8']);
       K.sign('Дорога в поход', -W / 2 + 0.04, 2.95, 0.4, 1.3, Math.PI / 2, { bg: '#a3122a', fg: '#fff3dc' });
       // armour stand: post, shoulders, a red tabard, a crested helmet
       K.cyl('wood', P.woodD, 3.9, 0, 2.6, 0.05, 1.55, 8); K.box('wood', P.woodD, 3.62, 4.18, 1.32, 1.4, 2.56, 2.64); K.cyl('wood', P.woodD, 3.9, 0, 2.6, 0.22, 0.06, 12);
-      K.box('canvas', '#a3122a', 3.66, 4.14, 0.75, 1.32, 2.5, 2.7); K.box('canvas', '#ffcf4a', 3.66, 4.14, 1.05, 1.1, 2.49, 2.71);
+      K.box('canvas', '#a3122a', 3.66, 4.14, 0.75, 1.32, 2.5, 2.7); K.box('canvas', '#ffcf4a', 3.65, 4.15, 1.05, 1.1, 2.49, 2.71);
       K.ball('metal', '#c4cad3', 3.9, 1.62, 2.6, 0.2, 0.95); K.box('canvas', '#a3122a', 3.88, 3.92, 1.7, 1.95, 2.42, 2.78);
       K.solid(3.6, 4.2, 2.35, 2.85, Infinity, false);
       wallLamp(K, -1.3, 2.3, D / 2, Math.PI, { real: 1 }); wallLamp(K, 1.3, 2.3, D / 2, Math.PI);
@@ -408,6 +411,8 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
   /* ---------------------------------------------------------------- anvil: the open forge shed with the smith */
   anvil: {
     side: 'left', verb: 'К наковальне — заточка',
+    // the hero faces the anvil with the smith behind it
+    stage: { focus: [0.6, 0.8, -2.1], dist: 1.7 },
     build(R, env) {
       const K = R.kit, P = R.pal, W = 9, D = 8;
       R.bg = '#26265e'; R.fogNear = 12; R.fogFar = 40;
@@ -420,9 +425,9 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       // shed: posts, roof, back wall
       const sx0 = -2.6, sx1 = 3.4, sz0 = -D / 2, sz1 = -0.6, sh = 3.6;
       for (const x of [sx0, sx1]) for (const z of [sz0 + 0.1, sz1]) { K.box('wood', P.timber, x - 0.12, x + 0.12, 0, sh, z - 0.12, z + 0.12); K.solid(x - 0.14, x + 0.14, z - 0.14, z + 0.14, Infinity); }
-      K.box('brick', P.brick, sx0, sx1, 0, sh, sz0 - 0.2, sz0);
+      K.box('brick', P.brick, sx0, sx1, 0, sh - 0.01, sz0 - 0.2, sz0);
       K.geo('roof', new THREE.BoxGeometry(1, 1, 1), new THREE.Matrix4().compose(new THREE.Vector3((sx0 + sx1) / 2, sh + 0.45, (sz0 + sz1) / 2 + 0.2), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.22), new THREE.Vector3(sx1 - sx0 + 0.8, 0.12, sz1 - sz0 + 1.4)), P.roof);
-      K.box('wood', P.timber, sx0 - 0.2, sx1 + 0.2, sh - 0.1, sh + 0.1, sz1 - 0.12, sz1 + 0.12);
+      K.box('wood', P.timber, sx0 - 0.2, sx1 + 0.2, sh - 0.1, sh + 0.1, sz1 - 0.135, sz1 + 0.135);
       // hearth (the main light, flickers; flashes on every blow)
       K.box('stone', '#7a6a72', sx1 - 1.8, sx1 - 0.2, 0, 0.9, sz0, sz0 + 1.0);
       K.box('emit', '#ff7a2a', sx1 - 1.6, sx1 - 0.4, 0.9, 0.95, sz0 + 0.15, sz0 + 0.85);
@@ -437,7 +442,7 @@ export const HYBRID_SCENES: Record<string, HybridSpec> = {
       K.rbox('wood', '#8a4a2a', sx1 - 2.2, 0.55, sz0 + 0.55, 0.5, 0.18, 0.7, 0.3); K.rbox('canvas', '#5a3a2a', sx1 - 2.2, 0.45, sz0 + 0.55, 0.42, 0.14, 0.6, 0.3); K.solid(sx1 - 2.5, sx1 - 1.9, sz0 + 0.15, sz0 + 0.95, 0.65);
       K.cyl('wood', '#7a5a3a', 2.1, 0, -1.4, 0.24, 0.42, 12); K.cyl('water', '#3a5a8a', 2.1, 0.38, -1.4, 0.21, 0.02, 12); K.solid(1.85, 2.35, -1.65, -1.15, 0.42);
       sack(K, sx0 + 1.2, sz0 + 0.5, '#3a3440', 0.85);
-      for (let i = 0; i < 6; i++) { const x = sx0 + 0.3 + i * 0.3; K.box('metal', '#3a3440', x - 0.012, x + 0.012, 1.55, 2.25, sz0 + 0.02, sz0 + 0.06); K.box(i % 2 ? 'wood' : 'metal', i % 2 ? '#8a5a2b' : '#9aa2ac', x - 0.05, x + 0.05, 1.4, 1.58, sz0 + 0.02, sz0 + 0.08); }
+      for (let i = 0; i < 6; i++) { const x = sx0 + 0.3 + i * 0.3; K.box('metal', '#3a3440', x - 0.012, x + 0.012, 1.55, 2.25, sz0 + 0.02, sz0 + 0.06); K.box(i % 2 ? 'wood' : 'metal', i % 2 ? '#8a5a2b' : '#9aa2ac', x - 0.05, x + 0.05, 1.4, 1.58, sz0 + 0.026, sz0 + 0.08); }
       K.box('wood', P.woodD, sx0 + 0.15, sx0 + 2.0, 2.25, 2.32, sz0, sz0 + 0.12);
       K.geo('stone', DISCZ, M(-1.6, 0.5, -1.2, 0.8, 0.8, 2.4, 0, Math.PI / 2, 0), '#9a929e'); K.box('wood', P.woodD, -1.75, -1.45, 0, 0.3, -1.45, -0.95); K.solid(-1.8, -1.4, -1.5, -0.9, 0.9);
       K.prop('barrel', sx0 + 0.5, 0, sz0 + 0.5, 0, 0.9); K.prop('crate', sx0 + 0.5, 0, sz0 + 1.4, 0.3, 0.8);

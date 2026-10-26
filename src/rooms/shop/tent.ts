@@ -15,6 +15,7 @@ import { stripeColors } from '../../world/kit';
 import { createAvatarKit, appearanceFrom } from '../../avatar';
 import type { Avatar } from '../../contracts/modules';
 import type { Look } from '../../contracts';
+import { faceTo } from '../common/npc';
 
 const RAD = 5.6, WALL = 2.8, APEX = 6.4;
 const _d = new THREE.Vector3(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
@@ -94,7 +95,9 @@ export function buildTent(R: RoomBase, st: TentStock | null): void {
   const span = Math.PI * 2 - 1.4;   // keep the door sector free
   booths.forEach((b, i) => {
     const ang = Math.PI + (n === 1 ? 0 : (i - (n - 1) / 2) * (span / Math.max(n - 1, 1))), r = RAD - 0.7;
-    const cx = Math.sin(ang) * r, cz = Math.cos(ang) * r, face = ang + Math.PI;   // face the centre
+    // `face` = the booth's front for planes (signs, tags, backdrop: 0 faces +Z) → towards the centre;
+    // the mannequin uses the avatar convention (0 looks to −Z): looking at the centre is `ang` itself
+    const cx = Math.sin(ang) * r, cz = Math.cos(ang) * r, face = ang + Math.PI, look = ang;
     const tx = Math.cos(ang), tz = -Math.sin(ang);   // tangent
     const bw = 1.3;
     // posts, arch, curtains, platform
@@ -119,9 +122,10 @@ export function buildTent(R: RoomBase, st: TentStock | null): void {
     try {
       av = kit.create(appFor(cur));
       av.setLod(1);
-      av.root.position.set(cx, 0.12, cz); av.root.rotation.y = face;
+      av.root.position.set(cx, 0.12, cz); av.root.rotation.y = look;
       R.root.add(av.root);
-      mannequins.push({ av, ph: i * 1.7, base: face, x: cx, z: cz, lod: 1 });
+      mannequins.push({ av, ph: i * 1.7, base: look, x: cx, z: cz, lod: 1 });
+      R.figures.push({ name: 'манекен ' + (b.title || b.key), x: cx, z: cz, face: look });
     } catch (e) { console.warn('[l3d rooms] mannequin', b.key, e); }
     const hit = hitBox(cx, 1.2, cz, 1.2, 2.4, 1.2, 'room:hit:booth:' + b.key);
     R.interact({
@@ -140,7 +144,7 @@ export function buildTent(R: RoomBase, st: TentStock | null): void {
       const d2 = (p.x - m.x) * (p.x - m.x) + (p.z - m.z) * (p.z - m.z);
       const want: 0 | 1 = d2 < (m.lod === 0 ? LOD_FAR * LOD_FAR : LOD_NEAR * LOD_NEAR) ? 0 : 1;
       if (want !== m.lod) { m.lod = want; m.av.setLod(want); }
-      m.av.root.rotation.y = m.base + Math.sin(t * 0.5 + m.ph) * 0.35; m.av.update(dt, t, 0);
+      m.av.root.rotation.y = m.base + Math.sin(t * 0.5 + m.ph) * 0.3; m.av.update(dt, t, 0);
     }
   });
   R.onDispose(() => { for (const m of mannequins) m.av.dispose(); });
@@ -170,12 +174,13 @@ export function buildTent(R: RoomBase, st: TentStock | null): void {
   const mx = -2.2, mz = 3.6;
   K.rbox('wood', '#ffcf4a', mx, 1.2, mz, 0.9, 2.0, 0.1, 2.5); K.rbox('glass', '#cfe7ff', mx + 0.02, 1.2, mz + 0.02, 0.75, 1.8, 0.02, 2.5);
   K.solid(mx - 0.4, mx + 0.4, mz - 0.4, mz + 0.4, Infinity, false);
-  R.npc({ seed: 'франт', name: 'Франт', x: 1.7, z: 1.6, face: -0.6, look: { hat: 'tophat', acc: ['monocle', 'bowtie'], shape: 'tall', color: '#ffe27a' },
+  R.npc({ seed: 'франт', name: 'Франт', x: 1.7, z: 1.6, face: faceTo(1.7, 1.6, 0, 1.6),   // across the aisle: towards both the door and the tent centre
+    look: { hat: 'tophat', acc: ['monocle', 'bowtie'], shape: 'tall', color: '#ffe27a' },
     hello: ['Добро пожаловать в Будуар! Примерочные свободны.', 'О, какие усы! Проходите, подберём что-нибудь эдакое.', 'Выбирай кабинку — примерим прямо на манекене!'],
     lines: ['Румянец — к лицу всем.', 'Аура — это навсегда. Почти.', 'Шляпа делает кота.'], emote: { anim: 'cheer', every: 12 } });
   K.lantern(-2.4, 2.4, 1.5, WALL + 0.8, '#ffcf6a', true);
   K.lantern(2.4, 2.4, -1.8, WALL + 1.0, '#ff8fa3', true);
   // door at +Z
-  R.exitDoor(0, 1.4, 2.3);
+  R.exitDoor(0, 1.8, 2.3, { style: 'curtain', z: RAD - 0.1 });
   R.spawn = { x: 0, z: RAD - 1.0, face: 0 };
 }

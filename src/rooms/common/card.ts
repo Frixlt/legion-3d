@@ -6,6 +6,7 @@
  *
  * While open, gameplay input is off and the pointer lock is released; Esc / E / «Закрыть» close it.
  */
+import { setModal, type ModalInput } from '../../core/modal';
 import type { Hero, Store, Actions, ApiResult } from '../../contracts';
 import { CSS } from '../../ui/styles';
 import { cardHtml } from '../../ui/card';
@@ -17,7 +18,7 @@ import { RARITY_HEX } from './items';
 export interface CardHost {
   store: Pick<Store, 'hero' | 'on'>;
   actions: Pick<Actions, 'post'>;
-  input?: { setGameplay(on: boolean): void; lock?(): void; readonly gameplay?: boolean };
+  input?: ModalInput & { lock?(): void; readonly gameplay?: boolean };
   toast(text: string, bad?: boolean): void;
   /** Mount point (default document.body). */
   mount?: HTMLElement;
@@ -124,11 +125,10 @@ export class BuyCard {
   private shown(on: boolean) {
     if (on) {
       window.addEventListener('keydown', this.keyH, true);
-      this.H.input?.setGameplay(false);
-      try { if (document.pointerLockElement) document.exitPointerLock(); } catch { /* not supported */ }
+      setModal(this.H.input, 'room:card', true, () => this.close());
     } else {
       window.removeEventListener('keydown', this.keyH, true);
-      this.H.input?.setGameplay(true);
+      setModal(this.H.input, 'room:card', false);
     }
     this.H.onOpen?.(on);
   }

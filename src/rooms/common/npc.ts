@@ -19,6 +19,9 @@ export interface NpcDef {
   scale?: number;
 }
 
+/** Facing (Walker.face convention: 0 looks to −Z) of a figure at (x,z) looking at (tx,tz). */
+export const faceTo = (x: number, z: number, tx: number, tz: number): number => Math.atan2(-(tx - x), -(tz - z));
+
 let KIT: AvatarKit | null = null;
 const kit = () => (KIT || (KIT = createAvatarKit()));
 

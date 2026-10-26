@@ -78,6 +78,9 @@ function scaffolding(k: Ctx, x0: number, x1: number, zf: number, h: number): voi
   }
   // «СКОРО» board leaning on the scaffold
   signZ(k, 'СКОРО', (x0 + x1) / 2 + 0.3, 0.9, zf + 0.85, 1.4, { bg: '#d9a066', fg: '#6a2a5a' });
+  // nobody walks through the poles / under the 1.2 m deck (the FP eye ended up inside the planks)
+  (k.solids ||= []).push(x0 - 0.15, x1 + 0.15, zf, zf + 1.05, Infinity);
+  k.colliders.push(x0 - 0.1, x1 + 0.1, 0, h, zf, zf + 0.75);
 }
 
 /* ---------------------------------------------------------------- per-id builders */
@@ -97,6 +100,7 @@ const hall: BuildFn = (k, b, x0, x1, zf, h) => {
   box(k, 'stone', shade(P.stone, -0.2), tx0 - 0.08, tx1 + 0.08, th - 0.2, th + 0.02, zf - 4.3, zf + 0.33, 0.6);   // cap 2 cm above the tower top
   for (let i = 0; i < 4; i++) box(k, 'stone', shade(P.stone, -0.2), tx0 + (tx1 - tx0) * i / 3.4, tx0 + (tx1 - tx0) * i / 3.4 + 0.22, th + 0.02, th + 0.3, zf + 0.05, zf + 0.32);
   pyramidRoof(k, P.roof, (tx0 + tx1) / 2, zf - 2, tw + 0.5, 4.6, th + 0.3, 2.4);
+  (k.solids ||= []).push(tx0 - 0.1, tx1 + 0.1, zf - 4.3, zf + 0.45, Infinity);   // the tower stands 25 cm proud of the facade line
   flag(k, (tx0 + tx1) / 2, th + 2.6, zf - 2, 1.2, P.flag);
   // clock
   const cxk = (tx0 + tx1) / 2, cy = th - 1.1;
@@ -159,7 +163,7 @@ const board: BuildFn = (k, b, x0, x1, zf, h) => {
   box(k, 'wood', P.wood, cx - w / 2 + 0.1, cx + w / 2 - 0.1, 0.8, top - 0.5, bz - 0.06, bz + 0.02, 0.6);
   box(k, 'wood', P.woodD, cx - w / 2 - 0.01, cx + w / 2 + 0.01, 0.72, 0.82, bz - 0.11, bz + 0.11);
   box(k, 'wood', P.woodD, cx - w / 2 - 0.01, cx + w / 2 + 0.01, top - 0.55, top - 0.45, bz - 0.11, bz + 0.11);
-  gableRoof(k, P.roof, 'wood', P.wood, cx - w / 2 - 0.1, cx + w / 2 + 0.1, bz - 0.3, bz + 0.3, top, 0.6, 0.25);
+  gableRoof(k, P.roof, 'wood', P.wood, cx - w / 2 - 0.1, cx + w / 2 + 0.1, bz - 0.3, bz + 0.3, top, 0.6, 0.25, true);
   const r = k.rnd;
   for (let i = 0; i < 9; i++) {
     const px = cx - w / 2 + 0.45 + (w - 0.9) * (i % 3 + r() * 0.3) / 2.6, py = 1.05 + (top - 1.9) * (Math.floor(i / 3) + r() * 0.2) / 2.4;
@@ -182,6 +186,11 @@ const anvil: BuildFn = (k, b, x0, x1, zf, h) => {
   const d = zFront - zb + 0.6;
   k.b.add('roof', GEO2.shed, M((x0 + x1) / 2, rh, (zFront + zb) / 2 + 0.15, x1 - x0 + 0.4, 0.7, d), '#d9774f', [3, 2]);
   k.b.add('flat', GEO2.shed, M((x0 + x1) / 2, rh - 0.07, (zFront + zb) / 2 + 0.15, x1 - x0 + 0.4, 0.7, d), '#5a2a1a', 1);
+  {   // eave board + rake boards close the 7 cm slot between the slope and its underside (no see-through edge)
+    const zc = (zFront + zb) / 2 + 0.15, sw = x1 - x0 + 0.4, ang = Math.atan2(0.7, d), sl = Math.hypot(0.7, d);
+    box(k, 'wood', '#5a2a1a', (x0 + x1) / 2 - sw / 2 + 0.006, (x0 + x1) / 2 + sw / 2 - 0.006, rh - 0.083, rh + 0.017, zc + d / 2 - 0.023, zc + d / 2 + 0.023, 0.5);
+    for (const s of [-1, 1]) rbox(k, 'wood', '#5a2a1a', (x0 + x1) / 2 + s * (sw / 2 - 0.017), rh + 0.35 - 0.033, zc, 0.046, 0.1, sl - 0.012, 0, ang, 0, 0.5);
+  }
   box(k, 'wood', P.woodD, x0, x1, rh - 0.18, rh, zFront - 0.11, zFront + 0.11, 0.6);   // beam 1 cm proud of the posts
   // hearth
   const hx = x0 + 0.9;
@@ -419,7 +428,7 @@ export interface BuildingModel {
  */
 export const BUILDING_MODELS: Record<string, BuildingModel> = {
   hall: { build: hall }, auction: { build: auction }, trainer: { build: trainer }, board: { build: board, front: 0.5 },
-  anvil: { build: anvil, front: 1.4 }, forge: { build: forge }, gate: { build: gate }, tent: { build: tent, front: 0.6 },
+  anvil: { build: anvil, front: 1.4 }, forge: { build: forge }, gate: { build: gate }, tent: { build: tent, front: 1.2 },
   shop: { build: shop, front: 2.4, solidFront: 1.45, door: { hw: 1.3, h: 2.6 } }, magic: { build: magic },
   mine: { build: mine, door: { hw: 0.95, h: 2.3 } }, mineboard: { build: mineboard, door: { hw: 0.5, h: 2.1 } },
   storage: { build: storage, door: { hw: 0.85, h: 2.1 } },
@@ -437,12 +446,24 @@ export function buildBuilding(k: Ctx, b: Building): void {
   const h = Math.max(2.5, (800 - b.hit[2]) * 0.01);
   const zf = -0.15;
   const model = modelOf(b);
+  // how far the facade's attachments (signs, sills, turrets, lamps) stand out at body height: the Infinity solid must
+  // cover them, or the FP eye (near plane 5 cm) walks into a sign / turret and sees its inside (audit: eye clearance)
+  let reach = -Infinity;
+  const rec = k.b.recorder, upper = isUpper(b);
+  if (upper && model.solidFront === undefined) k.b.recorder = (mat, g, tag, look) => {
+    rec?.(mat, g, tag, look);
+    g.computeBoundingBox(); const bb = g.boundingBox!;
+    if (bb.min.y < 2.0 && bb.max.y > 0.35 && bb.max.x > x0 && bb.min.x < x1) reach = Math.max(reach, bb.max.z);
+  };
   model.build(k, b, x0, x1, zf, h);
+  k.b.recorder = rec;
   // coarse camera colliders + solids (lower-street builders push their own)
-  if (isUpper(b)) {
-    const front = zf + (model.front ?? 0);
-    k.colliders.push(x0, x1, 0, Math.min(h, 4.5), zf - 5, front);
-    (k.solids ||= []).push(x0, x1, zf - 6, zf + (model.solidFront ?? model.front ?? 0), Infinity);
+  if (upper) {
+    const front = zf + (model.front ?? 0), solid0 = zf + (model.solidFront ?? model.front ?? 0);
+    const solid = Math.max(solid0, Math.min(reach + 0.05, solid0 + 0.3));
+    // camera collider up to the roof (the high TP camera never enters a roof) and out to the attachments
+    k.colliders.push(x0, x1, 0, h + 2.5, zf - 5, Math.max(front, solid));
+    (k.solids ||= []).push(x0, x1, zf - 6, solid, Infinity);
   }
   if (b.soon && (b.id === 'hall')) scaffolding(k, x0 + 1.2, x1, zf, Math.min(h * 0.62, 4));
 }

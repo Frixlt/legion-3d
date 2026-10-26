@@ -132,6 +132,8 @@ export interface SiteSession {
   readonly actions: Actions;
   /** Our own position changes (px). Throttled internally, sent through the site's city client. */
   moveTo(x: number, y: number): void;
+  /** Stop sending our street position (inside our own 3D rooms). Optional for fakes. */
+  pauseMoves?(on: boolean): void;
   /** Art provider backed by the site's SVG art (LGCityArt / MDDoodle). */
   art(): ArtProvider | null;
   /** Hide the site's own 2D city rendering (keep it alive for presence) or show it back (classic mode). */

@@ -51,8 +51,8 @@ export function stand(R: RoomBase, F: Frame, st: StockStand, o: StandOpts): void
   F.box(R, 'wood', trim, -hw + 0.05, hw - 0.05, 1.18, 1.24, 0.08, 0.16);
   // middle shelf
   F.box(R, 'wood', trim, -hw + 0.04, hw - 0.04, 0.9, 0.96, 0.08, 0.46);
-  F.box(R, 'wood', board, -hw + 0.04, -hw + 0.1, 0.5, 0.96, 0.08, 0.46);
-  F.box(R, 'wood', board, hw - 0.1, hw - 0.04, 0.5, 0.96, 0.08, 0.46);
+  F.box(R, 'wood', board, -hw + 0.04, -hw + 0.1, 0.5, 0.9, 0.09, 0.45);   // brackets under the shelf (not flush with it)
+  F.box(R, 'wood', board, hw - 0.1, hw - 0.04, 0.5, 0.9, 0.09, 0.45);
   // plinth for the case row
   F.box(R, 'wood', P.woodD, -hw, hw, 0, 0.16, 0.5, 1.15);
   F.box(R, 'wood', trim, -hw - 0.02, hw + 0.02, 0.16, 0.19, 0.48, 1.17);
@@ -122,7 +122,7 @@ export function shelves(R: RoomBase, F: Frame, items: StockItem[], b: string, o:
   const P = R.pal, hw = o.w / 2, d = o.depth ?? 0.4, per = Math.ceil(items.length / o.levels.length);
   const top = o.levels[o.levels.length - 1] + 0.5;
   const side = o.side || P.woodL;
-  F.box(R, o.mat || 'wood', o.col || P.woodD, -hw, hw, 0, top, 0, 0.06);
+  F.box(R, o.mat || 'wood', o.col || P.woodD, -hw, hw, 0, top, 0, 0.075);   // proud of the wainscot cap (6 cm)
   F.box(R, 'wood', side, -hw - 0.06, -hw, 0, top, 0, d + 0.02);
   F.box(R, 'wood', side, hw, hw + 0.06, 0, top, 0, d + 0.02);
   F.box(R, 'wood', side, -hw - 0.1, hw + 0.1, top, top + 0.08, 0, d + 0.08);
@@ -145,7 +145,7 @@ export function awning(R: RoomBase, F: Frame, lx0: number, lx1: number, y: numbe
     const a = lx0 + i * sw, col = i % 2 ? c2 : c1;
     const cx = F.x(a + sw / 2, out / 2), cz = F.z(a + sw / 2, out / 2);
     _q.setFromAxisAngle(_Y, F.face).multiply(_q2.setFromAxisAngle(_X, 0.36));
-    R.kit.geo('canvas', GEO.box, _m.compose(_v.set(cx, y - out * 0.18, cz), _q, _s.set(sw + 0.002, 0.03, out * 1.03)), col);
+    R.kit.geo('canvas', GEO.box, _m.compose(_v.set(cx, y - out * 0.18, cz), _q, _s.set(sw, 0.03, out * 1.03)), col);   // butt-joined strips (an overlap would share the top plane)
     R.kit.ball('canvas', col, F.x(a + sw / 2, out), y - out * 0.38, F.z(a + sw / 2, out), sw * 0.5, 0.45);
   }
 }

@@ -3,7 +3,9 @@
  * dialogs) sit above or below our canvas. While one is open the game hides and pauses itself and comes back after —
  * EXCEPT the building panel of a hybrid room, which is shown over our live 3D room (state.overlayOver3d): then the
  * canvas stays, and when that panel goes away (the site's «Выйти») the room is left too.
- * Esc closes the site's building interior (the site has no Esc handler there).
+ * Esc closes the site's building interior (the site has no Esc handler there), or leaves our 3D room.
+ * Scene mode (rooms.stage): a «Выйти на улицу» button in the corner of the free part of the screen (above the site's
+ * transparent room layer) leaves the room as well.
  */
 import { coreFeature } from './types';
 
@@ -15,6 +17,8 @@ export default coreFeature({
     let shownOver = false;   // the hybrid panel was seen open (it takes a moment to appear)
     let blocking = false;
     const tick = () => {
+      const showBtn = !!rooms.stage && !state.menu && !state.classic;
+      if (btn.hidden === showBtn) btn.hidden = !showBtn;
       if (state.classic) return;
       const ov = site.overlay();
       if (rooms.panel) {
@@ -44,6 +48,20 @@ export default coreFeature({
         return false;
       },
     });
-    return () => { window.clearInterval(timer); offK(); };
+    // «Выйти на улицу» in scene mode
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.id = 'l3d-scene-exit'; btn.textContent = '🚪 Выйти на улицу'; btn.hidden = true;
+    btn.title = 'Вернуться на улицу (Esc)';
+    btn.style.cssText = 'position:fixed;top:78px;z-index:201;padding:9px 16px;border:1.5px solid #ffcf6a;border-radius:999px;'
+      + "background:rgba(13,11,34,.82);color:#ffe9a8;font:800 14px/1.2 'Golos Text','Nunito',sans-serif;cursor:pointer;"
+      + 'box-shadow:0 6px 18px rgba(0,0,0,.35)';
+    btn.addEventListener('click', (e) => { e.preventDefault(); rooms.exit(); });
+    document.body.appendChild(btn);
+    const offRooms = rooms.onChange(() => {
+      const st = rooms.stage;
+      btn.hidden = !st || !!state.menu;
+      if (st) { const right = st.side !== 'right'; btn.style.right = right ? '18px' : ''; btn.style.left = right ? '' : '18px'; }
+    });
+    return () => { window.clearInterval(timer); offK(); offRooms(); btn.remove(); };
   },
 });

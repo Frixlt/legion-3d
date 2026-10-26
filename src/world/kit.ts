@@ -57,15 +57,45 @@ export function ball(k: Ctx, mat: BatchKey, color: THREE.ColorRepresentation, x:
   k.b.add(mat, GEO.sphere, M(x, y, z, r * 2, r * 2 * sy, r * 2), color, 1);
 }
 
+/**
+ * Gable walls of a ridge-along-X roof, local frame (centre of the wall line, base y=0): two pentagons at x = ±L/2, base
+ * z ∈ [−D/2, D/2], a vertical band of `band` m then the triangle of `tri` m — their slanted edges run parallel to the
+ * roof slope just under it, so no slot opens between the wall and the soffit (a plain triangle left a band ≈ h·over/(d/2)
+ * open at the eaves: the roof void and the far gable's back were visible through it). `inner` = facing inward.
+ */
+function gableWalls(L: number, D: number, band: number, tri: number, inner: boolean): THREE.BufferGeometry {
+  const p: number[] = [];
+  for (const s of [-1, 1]) {
+    const x = s * L / 2;
+    const v = [[x, 0, -D / 2], [x, 0, D / 2], [x, band, D / 2], [x, band + tri, 0], [x, band, -D / 2]];
+    const tris = band > 0.002 ? [[0, 1, 2], [0, 2, 4], [4, 2, 3]] : [[0, 1, 3]];
+    for (const [a, b, c] of tris) {
+      // outward (+x for s = 1): counter-clockwise seen from outside
+      const o = (s > 0) !== inner ? [a, c, b] : [a, b, c];
+      for (const q of o) p.push(v[q][0], q === 3 && band <= 0.002 ? tri : v[q][1], v[q][2]);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 /** Gable roof with ridge along X over [x0,x1]×[z0,z1], eaves at yBase, ridge at yBase+h. Includes fascia trims and gable walls. */
-export function gableRoof(k: Ctx, roofCol: string, wallMat: BatchKey, wallCol: string, x0: number, x1: number, z0: number, z1: number, yBase: number, h: number, over = 0.25): void {
+export function gableRoof(k: Ctx, roofCol: string, wallMat: BatchKey, wallCol: string, x0: number, x1: number, z0: number, z1: number, yBase: number, h: number, over = 0.25, open = false): void {
   const w = x1 - x0 + over * 2, d = z1 - z0 + over * 2, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
   const slope = Math.hypot(d / 2, h);
   k.b.add('roof', GEO2.gable, M(cx, yBase, cz, w, h, d), roofCol, [w / 0.9, slope / 0.9]);
-  // thickness: a slightly lower dark underside
-  k.b.add('wood', GEO2.gable, M(cx, yBase - 0.06, cz, w, h, d), shade(k.pal.woodD, 0.1), 0.5);
+  // thickness: a slightly lower dark underside, facing down (visible from under the eaves; was see-through from below)
+  k.b.add('wood', GEO2.gableUnder, M(cx, yBase - 0.06, cz, w, h, d), shade(k.pal.woodD, 0.1), 0.5);
   // gable walls (inside the roof outline, at the wall line)
-  k.b.add(wallMat, GEO2.gableEnds, M(cx, yBase, cz, x1 - x0, h * (1 - over / (d / 2)), z1 - z0), wallCol, 1.2);
+  const band = Math.max(0, h * over / (d / 2) - 0.045), tri = h * (1 - over / (d / 2));
+  let gw = gableWalls(x1 - x0, z1 - z0, band, tri, false);
+  k.b.add(wallMat, gw, M(cx, yBase, cz), wallCol, 1.2); gw.dispose();
+  // open structure (no walls under the roof: notice boards): the gable walls seen from inside, 1.5 cm in
+  if (open) { gw = gableWalls(x1 - x0 - 0.03, z1 - z0, band, tri, true); k.b.add(wallMat, gw, M(cx, yBase, cz), wallCol, 1.2); gw.dispose(); }
+  // walls up to the soffit along both eaves (6 mm inside the wall line): no slot into the roof void under the eaves
+  else if (band > 0.01) for (const z of [z0 + 0.006, z1 - 0.006]) box(k, wallMat, wallCol, x0 + 0.004, x1 - 0.004, yBase, yBase + band, z < cz ? z : z - 0.04, z < cz ? z + 0.04 : z, 1.2);
   // fascia boards along the slopes on both gable ends + ridge cap
   const ang = Math.atan2(h, d / 2);
   for (const ex of [x0 - over, x1 + over]) {
@@ -74,19 +104,25 @@ export function gableRoof(k: Ctx, roofCol: string, wallMat: BatchKey, wallCol: s
     }
   }
   rbox(k, 'roof', shade(roofCol, -0.25), cx, yBase + h + 0.02, cz, w + 0.04, 0.16, 0.22, 0, 0, 0, 1);
+  // eave boards close the slot between the slope and its underside along both eaves (no see-through edge)
+  for (const s of [-1, 1]) box(k, 'wood', shade(roofCol, -0.45), cx - w / 2 + 0.006, cx + w / 2 - 0.006, yBase - 0.073, yBase + 0.017, cz + s * d / 2 - 0.023, cz + s * d / 2 + 0.023, 1);
 }
 /** Gable roof with ridge along Z (gable facing the street): over [x0,x1]×[z0,z1]. */
 export function gableRoofZ(k: Ctx, roofCol: string, wallMat: BatchKey, wallCol: string, x0: number, x1: number, z0: number, z1: number, yBase: number, h: number, over = 0.25): void {
   const w = x1 - x0 + over * 2, d = z1 - z0 + over * 2, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
   const slope = Math.hypot(w / 2, h);
   k.b.add('roof', GEO2.gable, M(cx, yBase, cz, d, h, w, 0, Math.PI / 2, 0), roofCol, [d / 0.9, slope / 0.9]);
-  k.b.add('wood', GEO2.gable, M(cx, yBase - 0.06, cz, d, h, w, 0, Math.PI / 2, 0), shade(k.pal.woodD, 0.1), 0.5);
-  k.b.add(wallMat, GEO2.gableEnds, M(cx, yBase, cz, z1 - z0, h * (1 - over / (w / 2)), x1 - x0, 0, Math.PI / 2, 0), wallCol, 1.2);
+  k.b.add('wood', GEO2.gableUnder, M(cx, yBase - 0.06, cz, d, h, w, 0, Math.PI / 2, 0), shade(k.pal.woodD, 0.1), 0.5);
+  const gw = gableWalls(z1 - z0, x1 - x0, Math.max(0, h * over / (w / 2) - 0.045), h * (1 - over / (w / 2)), false);
+  k.b.add(wallMat, gw, M(cx, yBase, cz, 1, 1, 1, 0, Math.PI / 2, 0), wallCol, 1.2); gw.dispose();
+  const band = Math.max(0, h * over / (w / 2) - 0.045);
+  if (band > 0.01) for (const x of [x0 + 0.006, x1 - 0.006]) box(k, wallMat, wallCol, x < cx ? x : x - 0.04, x < cx ? x + 0.04 : x, yBase, yBase + band, z0 + 0.004, z1 - 0.004, 1.2);
   const ang = Math.atan2(h, w / 2);
   for (const ez of [z1 + over]) {
     for (const s of [1, -1]) rbox(k, 'wood', shade(roofCol, -0.45), cx + s * w / 4, yBase + h / 2, ez + (s > 0 ? 0.01 : 0), slope + 0.05, 0.12, 0.1, 0, 0, -s * ang, 1);
   }
   rbox(k, 'roof', shade(roofCol, -0.25), cx, yBase + h + 0.02, cz, 0.22, 0.16, d + 0.04, 0, 0, 0, 1);
+  for (const s of [-1, 1]) box(k, 'wood', shade(roofCol, -0.45), cx + s * w / 2 - 0.023, cx + s * w / 2 + 0.023, yBase - 0.073, yBase + 0.017, cz - d / 2 + 0.006, cz + d / 2 - 0.006, 1);
 }
 /** Pyramid (4-sided) roof over a square-ish footprint. */
 export function pyramidRoof(k: Ctx, roofCol: string, cx: number, cz: number, w: number, d: number, yBase: number, h: number): void {

@@ -88,10 +88,29 @@ function hiRimMat(): THREE.ShaderMaterial {
 }
 
 
+const DOOR_OPEN_S = 0.55, DOOR_CLOSE_S = 0.7;
+const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+/** Fade the page to the night colour by `inS` seconds (starting after the door has begun to swing), hold, fade back (the room swap happens under it). */
+function fadeFlash(inS: number): void {
+  if (typeof document === 'undefined' || !document.body) return;
+  const el = document.createElement('div');
+  el.setAttribute('aria-hidden', 'true');
+  el.style.cssText = `position:fixed;inset:0;z-index:104;pointer-events:none;background:#0d0b22;opacity:0;transition:opacity ${inS * 0.55}s ease-in ${inS * 0.45}s`;   // the door swings first, then the fade
+  document.body.appendChild(el);
+  requestAnimationFrame(() => { el.style.opacity = '1'; });
+  setTimeout(() => { el.style.transition = 'opacity .35s ease-out'; el.style.opacity = '0'; setTimeout(() => el.remove(), 400); }, inS * 1000 + 120);
+}
+const PICK_RC = new THREE.Raycaster(), PICK_P = new THREE.Vector3(), PICK_HITS: THREE.Intersection[] = [];
+
 export class RoomBase {
   readonly kit: RoomKit;
   readonly pal: Pal;
   readonly npcs: Npc[] = [];
+  /**
+   * Figures standing in the room — NPCs and mannequins — with their resting facing (Walker.face convention: 0 looks
+   * to −Z, forward = (−sin f, −cos f)). Facing audits (test/rooms-facing.test.ts): they must look into the walkable area.
+   */
+  readonly figures: { name: string; x: number; z: number; face: number }[] = [];
   readonly goods: Good[] = [];
   readonly inters: Interactable[] = [];
   card: BuyCard | null = null;
@@ -126,6 +145,7 @@ export class RoomBase {
   npc(def: NpcDef): Npc {
     const n = new Npc(def, this.env.styleId, this.heroName);
     this.npcs.push(n); this.root.add(n.root);
+    this.figures.push({ name: def.name, x: def.x, z: def.z, face: def.face });
     this.kit.solid(def.x - 0.35, def.x + 0.35, def.z - 0.3, def.z + 0.3, Infinity, false);
     return n;
   }
@@ -136,15 +156,62 @@ export class RoomBase {
     if ((i.hit as THREE.Object3D).isObject3D && !(i.hit as THREE.Object3D).parent) this.root.add(i.hit as THREE.Object3D);
     return i;
   }
+  /**
+   * The interactable whose hit volume a world ray meets first (scene mode: the free cursor's click / hover), or null.
+   * Exact mesh raycast for Object3D hits (one-sided planes honour their side), slab test for Box3 hits. No allocations.
+   */
+  pick(ray: THREE.Ray, far = 30): Interactable | null {
+    let best: Interactable | null = null, bestD = far;
+    PICK_RC.ray.copy(ray); PICK_RC.near = 0; PICK_RC.far = far;
+    for (const i of this.inters) {
+      const h = i.hit as THREE.Object3D | THREE.Box3;
+      if ((h as THREE.Box3).isBox3) {
+        const p = ray.intersectBox(h as THREE.Box3, PICK_P);
+        if (p) { const d = p.distanceTo(ray.origin); if (d < bestD) { bestD = d; best = i; } }
+        continue;
+      }
+      PICK_HITS.length = 0;
+      (h as THREE.Object3D).raycast(PICK_RC, PICK_HITS);
+      for (const x of PICK_HITS) if (x.distance < bestD) { bestD = x.distance; best = i; }
+    }
+    PICK_HITS.length = 0;
+    return best;
+  }
   onUpdate(fn: (dt: number, t: number) => void): void { this.updaters.push(fn); }
   onDispose(fn: () => void): void { this.disposers.push(fn); }
   /** A tag that is not a good (tent booth prices). Returns its future atlas index via the callback. */
   addTag(spec: TagSpec, pos: [number, number, number, number, number]): void { this.extraTags.push({ spec, pos }); }
-  /** «Выйти на улицу» door. */
-  exitDoor(x = this.kit.doorGap.x, w = this.kit.doorGap.w, h = this.kit.doorGap.h): void {
-    const c = this.kit.exitDoor(x, w, h);
+  /** «Выйти на улицу» door: a closed door (kit.exitDoor) that swings open as you leave and closes behind you on entering. */
+  exitDoor(x = this.kit.doorGap.x, w = this.kit.doorGap.w, h = this.kit.doorGap.h, o: { style?: 'wood' | 'curtain'; z?: number } = {}): void {
+    const c = this.kit.exitDoor(x, w, h, o);
     // one-sided (faces the room): the TP camera behind the cutaway entrance wall looks through it, never «at» it
-    this.interact({ id: 'room:exit', label: 'Выйти на улицу', icon: '🚪', hit: hitPlane(c.x, c.y, c.z - 0.12, w, h, Math.PI, 'room:hit:exit'), reach: 3.2, use: () => this.env.exit() });
+    this.interact({ id: 'room:exit', label: 'Выйти на улицу', icon: '🚪', hit: hitPlane(c.x, c.y, c.z - 0.12, w, h, Math.PI, 'room:hit:exit'), reach: 3.2, use: () => this.leave() });
+    const door = this.kit.door;
+    if (!door) return;
+    // entering: the door you came through is still swinging shut behind you
+    door.set(0.55);
+    let closeT = -0.25;
+    this.onUpdate((dt) => {
+      if (this.leaving >= 0) {
+        this.leaving += dt;
+        door.set(easeInOut(Math.min(1, this.leaving / DOOR_OPEN_S)));
+        if (this.leaving >= DOOR_OPEN_S && !this.left) { this.left = true; this.env.exit(); }
+        return;
+      }
+      if (closeT < DOOR_CLOSE_S) { closeT += dt; door.set(0.55 * (1 - easeInOut(Math.max(0, closeT) / DOOR_CLOSE_S))); }
+    });
+  }
+  private leaving = -1;
+  private left = false;
+  /**
+   * Leave through the door: it swings open into the warm street while the screen fades, then the room manager takes
+   * us back outside. Rooms without a kit door (anvil's open shed) leave at once.
+   */
+  leave(): void {
+    if (!this.kit.door) { this.env.exit(); return; }
+    if (this.leaving >= 0) return;
+    this.leaving = 0;
+    fadeFlash(DOOR_OPEN_S);
   }
   /** Queue a good: model placed with its pivot at (x,y,z), fitted to `fit` m; tag at tagPos [x,y,z,ry,rx]. */
   good(it: StockItem, b: string, p: Omit<Placed, 'obj'>, tag: [number, number, number, number, number] | null): void {

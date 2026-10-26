@@ -68,6 +68,13 @@ export function rock(k: Ctx, x: number, y: number, z: number, rx: number, ry: nu
     o.carve?.(_v, x, y, z);
     pos.setXYZ(i, _v.x, _v.y, _v.z);
   }
+  addRock(k, g);
+}
+
+/** Flat facets (non-indexed geometry), light/base/dark tone per face by its facing + a per-face jitter, into 'rock'. */
+function addRock(k: Ctx, g: THREE.BufferGeometry): void {
+  const P = k.pal;
+  const pos = g.attributes.position as THREE.BufferAttribute;
   g.computeVertexNormals();   // non-indexed → flat facets
   const nor = g.attributes.normal as THREE.BufferAttribute;
   const col = new Float32Array(pos.count * 3);
@@ -83,6 +90,88 @@ export function rock(k: Ctx, x: number, y: number, z: number, rx: number, ry: nu
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   k.b.add('rock', g, new THREE.Matrix4(), null, 1.6);
   g.dispose();
+}
+
+export interface ShellOpts {
+  /** Foot of the mass along x (it reaches the ground there). */
+  x0: number; x1: number;
+  /** Plateau x-range: full height H(z) here, falling to the ground towards x0 / x1. */
+  core: [number, number];
+  /** Retaining-wall face (z) and the front plane (z) of the mass. */
+  zw: number; zf: number;
+  /** Ground under the mass (world y) and the plateau height along z (world y). */
+  ground: number; H: (z: number) => number;
+  /** Opening in the front plane (the adit mouth): x-range and top (y); bottom = the ground. */
+  notch: [number, number, number];
+  seed: number;
+}
+
+/**
+ * Closed rock mass set into the retaining wall (owner bug: the mine could be seen INTO from the ledge / the sides):
+ * a displaced heightfield over [x0,x1]×[zw−0.3, zf] (plateau over the adit, falling to the ground at both feet, its back
+ * row buried under the coping/upper paving) plus the front cliff plane at zf with the adit opening cut out exactly.
+ * Every vertex only moves outward (up / forward / sideways jitter that keeps the clearance), seam vertices are shared by
+ * position (the displacement is a function of the undisplaced point), so the mass has no gaps from any angle.
+ */
+export function rockShell(k: Ctx, o: ShellOpts): void {
+  const { x0, x1, zw, zf, ground, notch } = o;
+  const g0 = ground - 0.05, [ca, cb] = o.core, [nx0, nx1, ny1] = notch;
+  // columns (~0.3 m) with the notch edges as exact column lines
+  const xs: number[] = [];
+  const nC = Math.max(4, Math.ceil((x1 - x0) / 0.3));
+  for (let i = 0; i <= nC; i++) { const x = x0 + (x1 - x0) * i / nC; if (Math.abs(x - nx0) > 0.1 && Math.abs(x - nx1) > 0.1) xs.push(x); }
+  xs.push(nx0, nx1); xs.sort((a, b) => a - b);
+  // rows: buried back row, just in front of the wall, then ~0.35 m to the front plane
+  const zs = [zw - 0.3, zw + 0.08];
+  const nR = Math.max(3, Math.ceil((zf - zw - 0.08) / 0.35));
+  for (let j = 1; j <= nR; j++) zs.push(zw + 0.08 + (zf - zw - 0.08) * j / nR);
+  const prof = (x: number, z: number) => {
+    const H = o.H(z);
+    if (x >= ca && x <= cb) return H;
+    const t = x < ca ? (ca - x) / (ca - x0) : (x - cb) / (x1 - cb);
+    return t >= 1 ? g0 : g0 + (H - g0) * Math.pow(1 - t * t, 0.6);
+  };
+  const hy = (i: number, j: number) => j === 0 ? Math.min(-0.03, prof(xs[i], zs[1])) : prof(xs[i], zs[j]);
+  // outward-only displacement as a function of the undisplaced point
+  const sd = o.seed;
+  const D = (x: number, y: number, z: number, out: THREE.Vector3): THREE.Vector3 => {
+    const ddx = Math.max(nx0 - x, 0, x - nx1), ddy = Math.max(y - ny1, 0);
+    const fade = Math.min(1, Math.max(0, (Math.hypot(ddx, ddy) - 0.04) / 0.35));
+    const foot = Math.min(1, Math.max(0, (y - (g0 + 0.04)) / 0.4)), back = Math.min(1, Math.max(0, (z - (zw + 0.02)) / 0.3));
+    const f = fade * foot * back;
+    if (f <= 0) return out.set(x, y, z);
+    const n1 = vnoise(x * 1.9 + sd, y * 1.9, z * 1.9), n2 = vnoise(x * 1.7, y * 1.7 + sd, z * 1.7 + 3.1), n3 = vnoise(x * 2.3 + 7.7, y * 2.3, z * 2.3 + sd);
+    return out.set(x + f * 0.1 * n3, y + f * 0.3 * (0.5 + 0.5 * n1), z + f * 0.24 * (0.5 + 0.5 * n2));
+  };
+  const pos: number[] = [];
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  const tri = (p: THREE.Vector3, q: THREE.Vector3, r: THREE.Vector3) => {
+    if (e1.subVectors(q, p).cross(e2.subVectors(r, p)).lengthSq() < 1e-10) return;   // collapsed rows → skip slivers
+    pos.push(p.x, p.y, p.z, q.x, q.y, q.z, r.x, r.y, r.z);
+  };
+  // heightfield (faces up): quad (i,j)-(i+1,j)-(i+1,j+1)-(i,j+1), z grows to the street
+  for (let j = 0; j + 1 < zs.length; j++) for (let i = 0; i + 1 < xs.length; i++) {
+    D(xs[i], hy(i, j), zs[j], a); D(xs[i + 1], hy(i + 1, j), zs[j], b);
+    D(xs[i + 1], hy(i + 1, j + 1), zs[j + 1], c); D(xs[i], hy(i, j + 1), zs[j + 1], d);
+    tri(a, d, c); tri(a, c, b);
+  }
+  // front cliff (faces +z): rows at fixed heights (the notch top is one of them), clipped to the heightfield's front row
+  const last = zs.length - 1;
+  let top = g0; for (let i = 0; i < xs.length; i++) top = Math.max(top, hy(i, last));
+  const ys = [g0];
+  const nY = Math.max(2, Math.ceil((top - g0) / 0.3));
+  for (let r = 1; r <= nY; r++) { const y = g0 + (top - g0) * r / nY; if (Math.abs(y - ny1) > 0.08) ys.push(y); }
+  ys.push(ny1); ys.sort((p, q) => p - q);
+  for (let r = 0; r + 1 < ys.length; r++) for (let i = 0; i + 1 < xs.length; i++) {
+    if (xs[i] >= nx0 - 1e-6 && xs[i + 1] <= nx1 + 1e-6 && ys[r + 1] <= ny1 + 1e-6) continue;   // the adit mouth
+    const ha = hy(i, last), hb = hy(i + 1, last);
+    D(xs[i], Math.min(ys[r], ha), zf, a); D(xs[i + 1], Math.min(ys[r], hb), zf, b);
+    D(xs[i + 1], Math.min(ys[r + 1], hb), zf, c); D(xs[i], Math.min(ys[r + 1], ha), zf, d);
+    tri(a, b, c); tri(a, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  addRock(k, g);
 }
 
 type Side = 'x0' | 'x1' | 'y1' | 'z0';
@@ -142,12 +231,21 @@ function timberSet(k: Ctx, cx: number, base: number, z: number, hw: number, h: n
   box(k, 'wood', shade(col, 0.06), cx - hw - t - 0.25, cx + hw + t + 0.25, base + h, base + h + 0.26, z - t / 2 - 0.02, z + t / 2 + 0.02, 0.6);
 }
 
+/**
+ * The adit of the street mine portal (world metres): centre x, half-width, height, frame plane zP, the mouth plane zf
+ * (front of the rock shell = tunnel entrance) and the tunnel's back zBack; base = the lower street. Tests check that
+ * the tunnel can only be seen through the mouth (test/world-enclosure.test.ts).
+ */
+export function mineAdit(b: Building, lowH: number): { cx: number; hw: number; th: number; base: number; zP: number; zf: number; zBack: number } {
+  const zP = toZ(b.hit[3]) - 0.55, depth = 2.4;
+  return { cx: (toX(b.hit[0]) + toX(b.hit[1])) / 2, hw: 0.72, th: 2.05, base: lowH, zP, zf: zP - 0.02, zBack: zP - depth };
+}
+
 export function mine(k: Ctx, b: Building, x0: number, x1: number): void {
   const P = k.pal, base = k.lowH, zw = k.wallZ, cx = (x0 + x1) / 2;
   const zFront = toZ(b.hit[3]);              // front of the footprint (the walk grid blocks up to here)
-  const zP = zFront - 0.55;                  // tunnel mouth / frame plane
-  const hw = 0.72, th = 2.05, depth = 2.4;  // adit half-width, height, visible depth
-  const zBack = zP - depth;
+  // adit half-width, height; tunnel mouth / frame plane zP; tunnel back
+  const { hw, th, zP, zBack } = mineAdit(b, base);
   // clearance box of the adit (+ frame) that no rock may enter; rocks above the upper street stay out of it
   const rockIdx = new Map<number, number>();
   const bx0 = cx - hw - 0.12, bx1 = cx + hw + 0.12, by1 = base + th + 0.32, bz0 = zBack - 0.05;
@@ -163,26 +261,30 @@ export function mine(k: Ctx, b: Building, x0: number, x1: number): void {
   };
   const R = (x: number, y: number, z: number, rx: number, ry: number, rz: number, detail: 0 | 1 | 2 = 1, rough = 0.2) =>
     rock(k, x, base + y, z, rx, ry, rz, { detail, rough, carve, seed: Math.floor(x * 13 + z * 7 + y * 3) });
-  // the outcrop: back masses against the wall, side jambs, the lintel crag, a crown, rubble at the foot
-  const w = x1 - x0;
-  R(cx - w * 0.28, 0.95, zw + 1.2, w * 0.36, 1.05, 1.25, 2, 0.22);
-  R(cx + w * 0.3, 0.85, zw + 1.0, w * 0.38, 1.0, 1.15, 2, 0.22);
-  R(cx, 1.55, zw + 1.6, w * 0.42, 0.85, 1.3, 2, 0.2);
+  // the mass itself: a closed shell from the ledge to the portal plane, the adit mouth cut out of its front exactly
+  // (nothing of the tunnel can be seen except through the mouth); boulders below are dressing on top of it
+  const w = x1 - x0, zf = mineAdit(b, base).zf, topY = base + th + 0.36;
+  rockShell(k, {
+    x0: x0 - 0.05, x1: x1 + 0.45, core: [cx - hw - 0.32, cx + hw + 0.32], zw, zf, ground: base,
+    H: (z) => z < zBack - 0.25 ? 0.16 + (topY - 0.16) * Math.pow(Math.max(0, (z - zw) / (zBack - 0.25 - zw)), 0.8) : topY + 0.12 * (z - zBack + 0.25) / (zf - zBack + 0.25),
+    notch: [cx - hw, cx + hw, base + th - 0.012], seed: 3.7,
+  });
+  // the outcrop dressing: side jambs, the lintel crag, a crown, rubble at the foot
   R(x0 + 0.42, 1.05, zP - 0.85, 0.62, 1.2, 1.05, 2, 0.18);          // left jamb
   R(x1 - 0.38, 1.0, zP - 0.8, 0.66, 1.15, 1.05, 2, 0.18);           // right jamb
   R(cx - 0.15, th + 0.62, zP - 0.75, 1.35, 0.58, 0.95, 2, 0.2);     // lintel crag over the cap
   R(cx + 0.55, th + 0.95, zP - 1.65, 0.95, 0.55, 0.9, 1, 0.22);     // crown
   R(x0 + 0.25, 0.32, zP + 0.05, 0.42, 0.4, 0.4, 1, 0.25);           // foot boulders
   R(x1 - 0.18, 0.28, zP + 0.12, 0.46, 0.36, 0.42, 1, 0.25);
-  R(x1 + 0.22, 0.55, zP - 1.2, 0.45, 0.7, 0.7, 1, 0.25);            // right flank spills past the footprint
-  R(x1 + 0.45, 0.9, zw + 1.1, 0.75, 1.05, 0.95, 2, 0.22);           // the cliff runs on along the wall
-  R(x1 + 1.25, 0.5, zw + 0.75, 0.7, 0.75, 0.7, 1, 0.24);
+  R(x1 + 0.05, 0.55, zP - 1.2, 0.38, 0.7, 0.7, 1, 0.25);            // right flank spills past the footprint
+  R(x1 + 0.45, 0.9, zw + 1.0, 0.75, 1.05, 0.75, 2, 0.22);           // the cliff runs on along the wall
+  R(x1 + 1.1, 0.45, zw + 0.6, 0.6, 0.7, 0.55, 1, 0.24);
   R(cx - 0.2, 2.05, zw + 0.75, w * 0.45, 0.62, 0.8, 2, 0.2);         // crest over the ledge
   for (const [dx, dz, r] of [[-1.05, 0.62, 0.16], [-0.98, 0.95, 0.1], [1.12, 0.7, 0.14], [1.25, 0.42, 0.1], [0.98, 1.02, 0.08]] as const) {
     R(cx + dx, r * 0.55, zP + dz, r * 1.2, r, r, 0, 0.3);
   }
   // the adit: dark gradient tunnel, timber sets inside, the portal frame with knee braces
-  tunnel(k, cx, base, zP - 0.02, zBack, hw, th - 0.012);   // ceiling 1.2 cm under the cap's underside
+  tunnel(k, cx, base, zf, zBack, hw, th - 0.012);   // ceiling 1.2 cm under the cap's underside
   for (const dz of [0.75, 1.5]) timberSet(k, cx, base, zP - dz, hw - 0.17, th - 0.12, shade(P.woodD, -0.25), 0.14);
   timberSet(k, cx, base, zP + 0.1, hw, th, P.woodD, 0.26, true);
   // planks across the cap ends (lagging) peeking out under the lintel crag
@@ -225,10 +327,12 @@ export function mine(k: Ctx, b: Building, x0: number, x1: number): void {
   signZ(k, b.title, cx, base + th + 0.005, zP + 0.1 + 0.13, 1.25);
   // solids: the whole outcrop is a wall for jumping; the cart can be stood on
   (k.solids ||= []).push(cx - 0.44, cx + 0.44, cz - 0.55, cz + 0.55, cy + 0.56);
-  (k.solids ||= []).push(x0 - 0.05, x1 + 0.6, zw, zP - 0.6, Infinity);
-  (k.solids ||= []).push(x0 - 0.05, cx - hw - 0.05, zP - 0.6, zFront + 0.05, Infinity);
+  (k.solids ||= []).push(x0 - 0.22, x1 + 0.6, zw, zP - 0.6, Infinity);
+  (k.solids ||= []).push(x0 - 0.22, cx - hw - 0.05, zP - 0.6, zFront + 0.05, Infinity);
   (k.solids ||= []).push(cx + hw + 0.05, x1 + 0.6, zP - 0.6, zFront + 0.05, Infinity);
-  k.colliders.push(x0, x1, base, base + th + 0.9, zw, zFront - 0.2);
+  (k.solids ||= []).push(x1 + 0.6, x1 + 1.75, zw, zw + 1.8, Infinity);   // the cliff along the wall right of the mass
+  k.colliders.push(x1 + 0.55, x1 + 1.75, base, base + 2.4, zw, zw + 1.6);
+  k.colliders.push(x0 - 0.05, x1 + 0.55, base, topY + 0.45, zw, zFront - 0.2);
 }
 
 /* ------------------------------------------------------------------ mine results board */
@@ -251,7 +355,7 @@ export function mineboard(k: Ctx, b: Building, x0: number, x1: number): void {
   // gold «1st place» medal on the middle notice
   k.b.add('metal', GEO.cyl12, M(cx, base + 0.98, z + 0.16, 0.08, 0.02, 0.08, Math.PI / 2, 0, 0), '#ffcf4a', 1);
   // little shingle roof and the title plaque under it
-  gableRoof(k, P.roof, 'wood', P.wood, cx - w / 2 - 0.08, cx + w / 2 + 0.08, z - 0.16, z + 0.2, base + top + 0.42, 0.26, 0.08);
+  gableRoof(k, P.roof, 'wood', P.wood, cx - w / 2 - 0.08, cx + w / 2 + 0.08, z - 0.16, z + 0.2, base + top + 0.42, 0.26, 0.08, true);
   signZ(k, b.title, cx, base + top + 0.08, z + 0.098, Math.min(1.0, w + 0.1));
   (k.solids ||= []).push(cx - w / 2, cx + w / 2, z - 0.1, z + 0.15, Infinity);
 }

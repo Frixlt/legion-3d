@@ -27,7 +27,7 @@ Everything is real 3D geometry built from the `CityLayout`; the site's 2D art is
 | `ground.ts` | analytic `groundAt` (upper street 0 m, lower street −1.4 m, stair ramps, bridge humps, canal water) |
 | `terrain.ts` | paving, retaining wall + stairs + railing, lower street, canal + bridges, city walls, backdrop houses, hills |
 | `buildings.ts` | `BUILDING_MODELS`: one builder per building id (hall, auction, trainer, board, anvil, forge, gate, tent, shop, magic, mine, mineboard, storage), generic fallbacks, `house()` fillers, scaffolding for `soon`, `entranceZ()` |
-| `lowstreet.ts` | lower-street models in the retaining wall: mine (flat-shaded displaced-icosphere rocks with the `rock` texture, timbered adit, gradient tunnel, rails, cart with ore, lantern, «ШАХТА»), mine results board, storage barn |
+| `lowstreet.ts` | lower-street models in the retaining wall: mine (`rockShell`: one closed rock mass from the ledge to the portal plane with the adit mouth cut out exactly, so the tunnel is visible only through the mouth (`mineAdit()`, test/world-enclosure.test.ts); displaced-icosphere boulders as dressing, timbered adit, gradient tunnel, rails, cart with ore, lantern, «ШАХТА»), mine results board, storage barn |
 | `static.ts` | `buildStatic()`: terrain + backdrop + buildings + fillers + props into a Ctx (no DOM: tests build the city in node) |
 | `solid.ts` | `SolidMap` (boxes/discs in a 1 m grid), `collectSolids()` (builder solids + prop footprints + coping/cheeks/bridge rails + water), `makeSolidTop()` |
 | `worldExt.ts` | door interactables, `renderMapImage()` (orthographic, sky/fog/glows hidden, bright neutral light, render target → flipped → data URL) |
@@ -66,3 +66,14 @@ Dev page: `npm run build`, open `dist-dev/world.html` (`?cam=x,y&yaw=deg&pitch=d
 - Contact blob shadows: one InstancedMesh `world:blobs` (radial texture, multiply-dark) under every placed prop.
 - Screenshots of the spawn: `sh .local/w2-shots.sh <tag>` → `.local/shots/w2/<tag>-{fp0,fpL,fpR,tp}.png`;
   world-only budget: `node .local/w2-budget.mjs`.
+
+## No see-through (round 2 audit)
+- `test/world-enclosure.test.ts`: ~280k sight lines from every reachable spot near the mine (FP eye on what you stand on,
+  camera heights 3 m / 6 m) — the first surface hit must never be a mine surface seen from behind.
+- Roofs (`kit.ts`): the dark underside layer faces down (`GEO2.gableUnder`), eave boards close the slot between slope and
+  underside, gable walls are pentagons up to the soffit (`gableWalls`), walls rise to the soffit along the eaves; open
+  structures (notice boards) pass `open = true` (inner gable faces). Anvil shed: eave + rake boards.
+- Upper buildings: the Infinity solid (and the camera collider) reaches the facade attachments at body height (signs,
+  turrets, lamps; ≤ +0.3 m) so the FP eye never enters them; camera colliders go up to the roof (h + 2.5 m).
+- Dev audits (not shipped, in `.local/`): `w4-sweep.mjs` (reachable viewpoints → contact sheets, `BF=1` paints back faces
+  red), `w4-bfaudit.ts` (CPU ray audit of back-face first hits by piece tag; `EYE=0.1` = near-plane clearance).

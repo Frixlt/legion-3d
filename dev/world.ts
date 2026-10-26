@@ -70,7 +70,8 @@ const app = document.getElementById('app')!;
 
   const fwd = new THREE.Vector3(), right = new THREE.Vector3();
   let last = performance.now(), t = 0, fps = 60, frames = 0;
-  (window as any).__world = { world, camera, renderer, scene };
+  // THREE + layout exposed for the visibility sweep (.local/w4-sweep.mjs: reachable viewpoints → contact sheets)
+  (window as any).__world = { world, camera, renderer, scene, THREE, layout };
   /** Triangle / draw-call breakdown by mesh name (for perf work). */
   (window as any).__worldStats = () => {
     const by: Record<string, [number, number]> = {}; let tris = 0, calls = 0;

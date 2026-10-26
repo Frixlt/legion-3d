@@ -49,6 +49,8 @@ export function buildTerrain(k: Ctx, L: CityLayout, s: GroundSpec): TerrainOut {
   }
   for (const [a, b] of stairsM) {
     flatQuad(k, 'paving', '#ffffff', a, b, BACK_Z, r0, 0, 2.4);
+    // riser under the paving edge at the top of the flight (the first tread is 8 cm lower: one could look under the street)
+    box(k, 'stone', shade(P.stone, 0.12), a + 0.004, b - 0.004, -0.3, 0, r0, r0 + 0.012, 0.7);
     const n = 9, dz = (r1 - r0) / n, dh = -lowH / n;
     for (let i = 0; i < n; i++) {
       const top = -(i + 0.5) * dh;   // average of ramp across the tread
@@ -63,6 +65,7 @@ export function buildTerrain(k: Ctx, L: CityLayout, s: GroundSpec): TerrainOut {
       box(k, 'brick', P.brick, x + (sx < 0 ? -0.3 : 0), x + (sx < 0 ? 0 : 0.3), lowH, 0.45, r0 - 0.1, wallZ + 0.1, 1.6);
       box(k, 'stone', shade(P.stone, 0.1), x + (sx < 0 ? -0.36 : -0.06), x + (sx < 0 ? 0.06 : 0.36), 0.45, 0.58, r0 - 0.16, wallZ + 0.16, 0.8);
       ball(k, 'stone', shade(P.stone, 0.2), x + sx * 0.15, 0.72, r0 - 0.05, 0.15);
+      k.colliders.push(x + (sx < 0 ? -0.36 : -0.06), x + (sx < 0 ? 0.06 : 0.36), lowH, 0.58, r0 - 0.16, wallZ + 0.16);   // TP camera stays out of the cheek
     }
   }
   // ---------------- lower street
@@ -125,6 +128,7 @@ function cityWalls(k: Ctx, W: number, lowH: number, zEnd: number): void {
     for (const z of [zf + 0.6, 6.0, BACK_Z + 1]) {
       cyl(k, 'stone', shade(st, 0.05), x, lowH - 0.2, z, 1.4, 8.5 - lowH, 12, 0.8);
       cone(k, 'roof', P.roof, x, 8.3, z, 1.75, 2.6);
+      k.colliders.push(x - 1.3, x + 1.3, lowH - 0.2, 8.3, z - 1.3, z + 1.3);   // the TP camera stays out of the tower
       windowZ(k, x, 5.6, z + 1.38, 0.3, 0.6, true, { arch: true });
     }
   }

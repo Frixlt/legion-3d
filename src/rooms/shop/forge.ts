@@ -53,13 +53,13 @@ export function buildForge(R: RoomBase, st: ShopStock | null, b: 'forge' | 'magi
     K.box('stone', '#6a5a62', -1.25, 1.25, 1.7, 1.95, -D / 2, -D / 2 + 1.1);
     K.geo('stone', new THREE.CylinderGeometry(0.5, 1.15, 1.0, 4, 1).rotateY(Math.PI / 4), new THREE.Matrix4().compose(new THREE.Vector3(0, 2.45, -D / 2 + 0.55), new THREE.Quaternion(), new THREE.Vector3(1.4, 1, 0.75)), '#6a5a62');
     K.box('stone', '#6a5a62', -0.4, 0.4, 2.9, H, -D / 2, -D / 2 + 0.75);
-    K.box('wood', P.woodD, -1.2, 1.2, 0.95, 1.7, -D / 2, -D / 2 + 0.06);
+    K.box('wood', P.woodD, -1.2, 1.2, 0.95, 1.7, -D / 2, -D / 2 + 0.07);
     const fire = K.light(0, 1.35, -D / 2 + 0.9, '#ff8a3a', 9, 8, 2.2, 3);
     K.splash(0, 1.3, -D / 2 + 1.02, 3.2, 2.2, '#ff8a3a', 0.35);
     K.splash(0, 0.02, -D / 2 + 1.9, 3.4, 2.2, '#ff8a3a', 0.3, 0, -Math.PI / 2);
     { const base = fire.intensity; R.onUpdate((_dt, t) => { fire.intensity = base * (0.85 + 0.1 * Math.sin(t * 13) * Math.sin(t * 5.3) + 0.05 * Math.sin(t * 31)); }); }
     // tools hanging on the hood: tongs, hammers, a horseshoe garland
-    for (let i = 0; i < 5; i++) { const x = -0.95 + i * 0.47; K.box('metal', '#3a3440', x - 0.012, x + 0.012, 1.25, 1.62, -D / 2 + 0.07, -D / 2 + 0.1); K.box(i % 2 ? 'wood' : 'metal', i % 2 ? '#8a5a2b' : '#9aa2ac', x - 0.05, x + 0.05, 1.1, 1.3, -D / 2 + 0.07, -D / 2 + 0.12); }
+    for (let i = 0; i < 5; i++) { const x = -0.95 + i * 0.47; K.box('metal', '#3a3440', x - 0.012, x + 0.012, 1.25, 1.62, -D / 2 + 0.07, -D / 2 + 0.1); K.box(i % 2 ? 'wood' : 'metal', i % 2 ? '#8a5a2b' : '#9aa2ac', x - 0.05, x + 0.05, 1.1, 1.3, -D / 2 + 0.076, -D / 2 + 0.12); }
     // bellows by the hearth, quench bucket, coal sack, grindstone
     K.rbox('wood', '#8a4a2a', 1.55, 0.55, -D / 2 + 0.6, 0.5, 0.18, 0.7, 0.3); K.rbox('canvas', '#5a3a2a', 1.55, 0.45, -D / 2 + 0.6, 0.42, 0.14, 0.6, 0.3);
     K.cyl('wood', '#7a5a3a', -1.55, 0, -D / 2 + 1.5, 0.24, 0.42, 12); K.cyl('water', '#3a5a8a', -1.55, 0.38, -D / 2 + 1.5, 0.21, 0.02, 12); K.solid(-1.8, -1.3, -D / 2 + 1.25, -D / 2 + 1.75, 0.42);

@@ -104,6 +104,8 @@ export interface MineHudHandlers {
   exit(): void;
   /** Card opened/closed (the room releases / restores pointer lock and gameplay keys). */
   modal(on: boolean): void;
+  /** The journal drawer opened / closed (a modal: the cursor is needed for its tabs). */
+  journal?(on: boolean): void;
   /** The mine chat input got / lost focus (the room turns gameplay keys off while typing). */
   typing?(on: boolean): void;
 }
@@ -181,13 +183,15 @@ export class MineHud {
     }
   }
 
-  open(kind: CardKind): void { const was = !!this.card; this.card = kind; if (!!kind !== was) this.h.modal(!!kind); this.parts.modal = ''; this.render(); }
+  open(kind: CardKind): void { const was = !!this.card; this.card = kind; if (!!kind !== was) this.h.modal(!!kind); this.parts.modal = '\u0000'; this.render(); }   // sentinel: always redraw (closing too — '' would match the cleared slot and leave the card on screen)
   close(): void { this.open(null); }
   /** Collapse / expand the card. */
   toggleMin(on = !this.min): void { this.min = on; lsSet(LS_MIN, on ? '1' : '0'); this.render(); }
   /** Journal drawer ([L]): closed → log → (same key) closed; tab = open that tab. */
   journal(tab: JTab | null | 'toggle' = 'toggle'): void {
+    const was = !!this.jr;
     this.jr = tab === 'toggle' ? (this.jr ? null : 'log') : tab;
+    if (!!this.jr !== was) this.h.journal?.(!!this.jr);
     if (this.jr === 'chat') this.unread = 0;
     if (!this.jr && this.typingOn) this.input.blur();
     this.render();
@@ -373,7 +377,7 @@ export class MineHud {
       case 'orebag': void c.oreBag().then(() => this.render()); this.render(); break;
     }
   }
-  dispose(): void { clearTimeout(this.tipT); if (this.card) this.h.modal(false); if (this.typingOn) this.setTyping(false); this.el.remove(); }
+  dispose(): void { clearTimeout(this.tipT); if (this.card) this.h.modal(false); if (this.jr) this.h.journal?.(false); if (this.typingOn) this.setTyping(false); this.el.remove(); }
 }
 
 /** Price with discounts — as minecore.pickPay (the game computes the same). */

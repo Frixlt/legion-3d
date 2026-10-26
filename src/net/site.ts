@@ -294,10 +294,12 @@ export async function connectSite(opts: { onStatus?: (s: string) => void } = {})
   if (me.ql) store.setQuest(me.ql);
 
   /* ---------------- own movement → site ---------------- */
-  let lastSent: [number, number] | null = null, lastSendAt = 0, pend: [number, number] | null = null, pendT = 0;
+  let lastSent: [number, number] | null = null, lastSendAt = 0, pend: [number, number] | null = null, pendT = 0, movesPaused = false;
+  /** Inside our own 3D rooms the street hero must not move: drop pending go and ignore moveTo until resumed. */
+  const pauseMoves = (on: boolean) => { movesPaused = on; if (on) { pend = null; if (pendT) { clearTimeout(pendT); pendT = 0; } } };
   const flush = () => {
     if (pendT) { clearTimeout(pendT); pendT = 0; }
-    if (!pend) return;
+    if (!pend || movesPaused) return;
     const [x, y] = pend; pend = null;
     // LGCity.go() closes an open building interior (goPoint → closePanel): never move while one is shown
     if (anyShown('.cy-room')) return;
@@ -305,7 +307,7 @@ export async function connectSite(opts: { onStatus?: (s: string) => void } = {})
     safe(() => W.LGCity.go(x, y), undefined);
   };
   const moveTo = (x: number, y: number) => {
-    if (classic) return;
+    if (classic || movesPaused) return;
     if (lastSent && Math.hypot(x - lastSent[0], (y - lastSent[1]) * 2) < 10) return;
     pend = [Math.round(x), Math.round(y)];
     // the server answers 429 «не так быстро» to bursts (seen live at ~3/s): stay at ≤ 2 go/s, the site's client
@@ -393,7 +395,7 @@ export async function connectSite(opts: { onStatus?: (s: string) => void } = {})
   document.addEventListener('visibilitychange', onVis);
 
   return {
-    store: store as Store, actions, moveTo, art, setClassic, tick, overlay, closeOverlay,
+    store: store as Store, actions, moveTo, pauseMoves, art, setClassic, tick, overlay, closeOverlay,
     selfPos: () => (store.me ? [store.me.x, store.me.y] : null),
     dispose() {
       for (const u of unsubs) u();

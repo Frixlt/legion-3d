@@ -11,6 +11,7 @@
  * «Чат шахты» tab (the HUD's input posts /api/mine/chat/say — only when the player types and sends). Throws (→ room manager falls back to the site's
  * 2D mine) when the hero has no access to this mine or the game refuses the entry. See docs/MINE.md.
  */
+import { setModal } from '../../core/modal';
 import * as THREE from 'three';
 import type { Unsub } from '../../contracts';
 import type { Registry, RoomDef, RoomContext, RoomScene, Interactable } from '../../contracts/ext';
@@ -86,8 +87,11 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
     stop: () => { void client.stop().then(() => hud.render()); },
     toBuyer: () => hud.open('buy'),
     exit: () => ctx.exit(),
-    modal: (on) => { modalOn = on; if (on) { ctx.input.unlock(); ctx.input.setGameplay(false); } else if (!hud.typing) ctx.input.setGameplay(true); },
-    typing: (on) => { if (on) { ctx.input.unlock(); ctx.input.setGameplay(false); } else if (!modalOn) ctx.input.setGameplay(true); },
+    // every card / the journal / the chat field is a modal on the input's stack: gameplay off, no pointer grab,
+    // no «click to return» hint, Esc closes it (src/core/modal.ts)
+    modal: (on) => { modalOn = on; setModal(ctx.input, 'mine:card', on, () => hud.close()); },
+    journal: (on) => setModal(ctx.input, 'mine:journal', on, () => hud.journal(null)),
+    typing: (on) => setModal(ctx.input, 'mine:chat', on),
   });
   // Esc closes an open card / the journal (before the core's «Esc = leave the building» binding sees it);
   // L opens / closes the journal (hero stats, mine log, mine chat)
