@@ -234,18 +234,20 @@ function pendant(p: Parts, id: string) {
 
 /* ------------------------------------------------------------------ consumables */
 
+// Order matters: the site renames its goods in a cat theme while the ids stay legacy (id 'apple' = «Килька»,
+// 'bread' = «Миска сметаны»…), so the NAME decides first and the id is only a fallback; specific words before general ones.
 const FOOD_HINTS: [RegExp, string][] = [
+  [/pie|пирог/i, 'pie'], [/корм|kibble/i, 'kibble'], [/сметан|cream/i, 'cream'], [/мят|catnip|трав|herb/i, 'herb'],
+  [/milk|молок/i, 'milk'], [/stew|уха|уху|суп|рагу|bowl|миск|каш/i, 'bowl'],
   [/fish|рыб|кильк|лосос|salmon|sprat|карас/i, 'fish'], [/apple|яблок/i, 'apple'], [/pear|груш/i, 'pear'],
-  [/ham|roast|meat|мяс|окорок|ветчин|жарк|колбас|sausage/i, 'meat'], [/cheese|сыр/i, 'cheese'], [/pie|пирог/i, 'pie'],
+  [/ham|roast|meat|мяс|окорок|ветчин|жарк|колбас|sausage/i, 'meat'], [/cheese|сыр/i, 'cheese'],
   [/bread|хлеб|батон/i, 'bread'], [/pretzel|крендел/i, 'pretzel'], [/kvass|квас|mug|кружк|beer|пиво|сидр/i, 'mug'],
-  [/tea|чай|cup|чаш/i, 'cup'], [/stew|уха|суп|рагу|bowl|миск|каш/i, 'bowl'], [/cake|торт|пирожн|honey|мёд|мед/i, 'cake'],
-  [/milk|молок|сметан/i, 'milk'],
+  [/tea|чай|cup|чаш/i, 'cup'], [/cake|торт|пирожн|honey|мёд|мед/i, 'cake'],
 ];
-/** Food model id from the site id / name ('bread' when nothing matches). */
+const hint = (s: string): string | null => { for (const [re, k] of FOOD_HINTS) if (re.test(s)) return k; return null; };
+/** Food model id: by the shown name first, then by the site id ('bread' when nothing matches). */
 export function foodKind(id = '', name = ''): string {
-  const s = id + ' ' + name;
-  for (const [re, k] of FOOD_HINTS) if (re.test(s)) return k;
-  return 'bread';
+  return (name && hint(name)) || hint(id) || 'bread';
 }
 
 function addFood(p: Parts, kind: string) {
@@ -308,6 +310,22 @@ function addFood(p: Parts, kind: string) {
       for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; p.add(sphere(0.016, 6, 4), '#ff9fb2', T(Math.cos(a) * 0.1, 0.075, Math.sin(a) * 0.1)); }
       p.add(sphere(0.022, 8, 6), '#e8455c', T(0, 0.115, 0));
       break;
+    case 'kibble':   // «Хрустящий корм»: a pink cat bowl of kibble
+      p.add(cyl(0.11, 0.08, 0.065, 18), '#ff8fa3', T(0, 0.0325, 0));
+      p.add(cyl(0.095, 0.095, 0.01, 18), '#8a5a2b', T(0, 0.062, 0));
+      for (let i = 0; i < 14; i++) { const a = i * 2.39, r = 0.075 * Math.sqrt((i + 0.5) / 14); p.add(sphere(0.02, 6, 4), i % 3 ? '#c07a44' : '#a0603a', T(Math.cos(a) * r, 0.072, Math.sin(a) * r)); }
+      break;
+    case 'cream':    // «Миска сметаны»: a blue bowl heaped with sour cream
+      p.add(cyl(0.11, 0.075, 0.065, 18), '#7fb0e8', T(0, 0.0325, 0));
+      for (const y of [0.012, 0.05]) p.add(torus(0.1 - y * 0.4, 0.006, 4, 18), '#ffffff', T(0, y, 0, Math.PI / 2));
+      p.add(sphere(0.095, 16, 8), '#fff8ee', T(0, 0.064, 0, 0, 0, 0, [1, 0.42, 1]));
+      p.add(cone(0.025, 0.04, 8), '#fffdf6', T(0, 0.1, 0));
+      break;
+    case 'herb':     // «Пучок кошачьей мяты»: a tied bunch of mint
+      for (let i = 0; i < 7; i++) { const a = i * 0.9; p.add(cone(0.035, 0.17, 6), i % 2 ? '#6ac46a' : '#82d67a', T(Math.cos(a) * 0.028, 0.13, Math.sin(a) * 0.028, Math.sin(a) * 0.32, 0, Math.cos(a) * 0.32)); }
+      p.add(cyl(0.022, 0.018, 0.1, 6), '#4a8a3a', T(0, 0.05, 0));
+      p.add(torus(0.026, 0.009, 4, 12), '#ff8fa3', T(0, 0.06, 0, Math.PI / 2));
+      break;
     case 'bread': default:
       p.add(capsule(0.05, 0.14, 4, 12), '#d9993f', T(0, 0.05, 0, 0, 0, Math.PI / 2, [1, 1, 0.85]));
       for (const x of [-0.05, 0, 0.05]) p.add(box(0.012, 0.01, 0.06), '#8a5a2b', T(x, 0.095, 0, 0, 0.5, 0));
@@ -316,7 +334,9 @@ function addFood(p: Parts, kind: string) {
 
 function foodFactory(fixed?: string): ItemModelFactory {
   return (look, o) => {
-    const L = (look || {}) as Look, kind = fixed || foodKind(o.id || '', String(L.name || ''));
+    // the shown name wins over the id-based default: the site renames goods while their ids stay the same
+    const L = (look || {}) as Look, name = String(L.name || '');
+    const kind = (name && hint(name)) || fixed || foodKind(o.id || '', name);
     const key = fixed ? 'food:' + (o.id || fixed) : 'slot:food';
     return wrap(key, cached('food|' + kind, SIZE.food, (p) => addFood(p, kind)), o, L);
   };
@@ -467,8 +487,11 @@ export function itemModelFactories(): Map<string, ItemModelFactory> {
     trinket: charmFactory('plain'), food: foodFactory(), potion: potionFactory, scroll: scrollFactory, material: materialFactory, relic: relicFactory,
   };
   for (const k of ITEM_SLOTS) m.set('slot:' + k, slot[k]);
-  const FIXED: Record<string, string> = { apple: 'apple', pear: 'pear', bread: 'bread', pretzel: 'pretzel', cheese: 'cheese', pie: 'pie', ham: 'meat', roast: 'meat',
-    kvass: 'mug', honey_cake: 'cake', sage_tea: 'cup', spicy_stew: 'bowl', fish: 'fish' };
+  // id → model as the site names these goods now (doodle.js ITEMS): apple «Килька», pretzel «Хрустящий корм», bread «Миска сметаны»,
+  // ham «Копчёная колбаска», roast «Целый лосось», honey_cake «Пучок кошачьей мяты», sage_tea «Тёплое молоко с мёдом», spicy_stew «Бойцовая уха».
+  // A good's name (look.name) still overrides this, so a later rename only needs the name hints above.
+  const FIXED: Record<string, string> = { apple: 'fish', pear: 'pear', bread: 'cream', pretzel: 'kibble', cheese: 'cheese', pie: 'pie', ham: 'meat', roast: 'fish',
+    kvass: 'mug', honey_cake: 'herb', sage_tea: 'milk', spicy_stew: 'bowl', fish: 'fish' };
   for (const k of ITEM_FOODS) m.set('food:' + k, foodFactory(FIXED[k] || 'bread'));
   m.set('*', giftFactory);
   return m;

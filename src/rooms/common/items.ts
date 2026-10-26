@@ -237,7 +237,9 @@ export function itemObject(it: StockItem, src: ModelSource): THREE.Object3D {
     try { return f(look, opts); } catch (e) { console.warn('[l3d rooms] item model', k, e); return null; }
   };
   const consumable = !key.startsWith('weapon:') && !key.startsWith('shield:') && !key.startsWith('hat:') && !key.startsWith('armor:') && !key.startsWith('charm:');
-  const exact = consumable ? tryReg(it.slot + ':' + it.id) : tryReg(key);
+  // food: the registry model is keyed by the legacy site id, so pass the shown name along — the factory picks the model by it
+  if (it.slot === 'food') { const f = reg && reg.get('food:' + it.id); if (f) try { return f({ ...look, name: it.name }, opts); } catch (e) { console.warn('[l3d rooms] item model', it.id, e); } }
+  const exact = consumable ? (it.slot === 'food' ? null : tryReg(it.slot + ':' + it.id)) : tryReg(key);
   if (exact) return exact;
   try { return ownMesh(localItemGeometry(it)); } catch (e) { console.warn('[l3d rooms] local model', it.id, e); }
   return tryReg('slot:' + it.slot) || tryReg('*') || ownMesh(genericModel(it.slot, it.rarity));
