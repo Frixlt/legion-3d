@@ -42,6 +42,7 @@ import cheersFx from './cheers-fx';
 import flight from './flight';
 import emotes from './emotes';
 import boom from './boom';
+import closeguard from './closeguard';
 
 export const FEATURES: (Feature | CoreFeature)[] = [
   settings, itemModels, menus, camera, crowd, labels, doors, controls, rooms, contentRooms, overlay, classic, quest, photo, debug, whatsnew, seasonal, sound,
@@ -54,6 +55,7 @@ export const FEATURES: (Feature | CoreFeature)[] = [
   mood, bench, cheer, cheersFx,
   stars, boats, landmarks, pawprints,
   flight, emotes, boom,
+  closeguard,
 ];
 
 /** Run every feature's setup in order. A failing feature is logged and skipped (the game still starts). */

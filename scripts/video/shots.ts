@@ -22,11 +22,15 @@ export interface Segment {
   /** test-only segments are not part of the final cut */
   test?: boolean;
   /** which video the segment belongs to (render.mjs --cut=…); default 'promo' */
-  cut?: 'promo' | 'gameplay';
+  cut?: 'promo' | 'gameplay' | 'edit';
+  /** edit cut: capture only output seconds [a, b) of the segment (the rest is fast-forwarded with rendering off) */
+  win?: [number, number];
+  /** slow-mo / speed ramp: [[output s, game-time rate], …] piecewise linear; frame(G, t) then gets GAME time */
+  rate?: [number, number][];
   /** narrator slots anchored on marks (gameplay cut): text is a suggestion for the voice-over */
   narr?: { mark: string; off: number; dur: number; text: string }[];
   /** dist-dev page: 'game' (offline demo, default) or 'showcase' */
-  page?: 'game' | 'showcase';
+  page?: 'game' | 'showcase' | `expedition${string}`;
   /** reason to skip (feature missing) or null */
   requires?(G: G): string | null;
   setup(G: G): Promise<void> | void;

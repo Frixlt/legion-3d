@@ -4,7 +4,8 @@
 //        [--frames=N] [--format=jpeg|png] [--jq=95] [--name=legion-3d-review] [--encoder=libx264|h264_nvenc]
 //        [--dsf=1.3333 (1080 layout at 1440p)] [--crf=18]
 //        [--no-assemble] [--assemble-only] [--bots=20] [--root=.] [--fresh]
-//        [--cut=promo|gameplay] [--no-audio] (gameplay: the game's own sound, captured + rendered, see README «Sound»)
+//        [--cut=promo|gameplay|edit] [--no-audio] (gameplay/edit: the game's own sound, captured + rendered, see README «Sound»)
+//        (edit: source shots → scripts/video/edit-compose.mjs builds the beat-cut trailer from video/edit/timeline.json)
 //
 // Every segment renders in its own headless Chrome: virtual time (video/bundle/director.js) advances exactly
 // 1/60 s per frame, the director poses the game, then a real screenshot (3D canvas + DOM UI) goes to
@@ -50,7 +51,8 @@ if (!opt['assemble-only'] && !opt['no-build']) {
   catch (e) { if (!existsSync(BUNDLE)) throw e; console.log('esbuild unavailable, using prebuilt bundle'); }
 }
 const bundle = existsSync(BUNDLE) ? readFileSync(BUNDLE, 'utf8') : '';
-const pageUrl = (page = 'game') => pathToFileURL(resolve(ROOT, `dist-dev/${page}.html`)).href + `?bots=${BOTS}`;
+// a page may carry its own query ('expedition?at=55&speed=1')
+const pageUrl = (page = 'game') => { const [p, q] = page.split('?'); return pathToFileURL(resolve(ROOT, `dist-dev/${p}.html`)).href + `?bots=${BOTS}` + (q ? '&' + q : ''); };
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
@@ -63,8 +65,10 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 // forced on («Всегда»), no «what's new» card, the pointer lock is emulated (vtime.ts) so the game plays as with a mouse
 // (both cuts: no «Что нового» card over the first shot)
 const LS = { 'l3d.quality': '3', 'l3d.cam': 'fp', 'l3d.post': '1', 'l3d.whatsnew.enabled': '0',
-  ...(CUT === 'gameplay' ? { 'l3d.vol.master': '1', 'l3d.vol.amb': '1', 'l3d.vol.sfx': '1', 'l3d.vol.ui': '1', 'l3d.event.mode': 'on', 'l3d.combat': 'on', 'l3d.combat.hint': '1' } : {}) };
-const CFG = CUT === 'gameplay' ? { seed: 20261026, audio: true, lock: true } : { seed: 20261026 };
+  ...(CUT === 'gameplay' || CUT === 'edit' ? { 'l3d.vol.master': '1', 'l3d.vol.amb': '1', 'l3d.vol.sfx': '1', 'l3d.vol.ui': '1', 'l3d.event.mode': 'on', 'l3d.combat': 'on', 'l3d.combat.hint': '1' } : {}),
+  // edit cut: no first-time hint toasts over the shots
+  ...(CUT === 'edit' ? { 'l3d.fun.flight.hint': '1', 'l3d.fun.bench.hint': '1' } : {}) };
+const CFG = CUT === 'gameplay' || CUT === 'edit' ? { seed: 20261026, audio: true, lock: true } : { seed: 20261026 };
 const INIT = `try{for(const [k,v] of Object.entries(${JSON.stringify(LS)}))localStorage.setItem(k,v);}catch(e){}\nwindow.__VT_CFG=${JSON.stringify(CFG)};\n` + bundle;
 let shared = null;   // persistent context (--profile)
 async function context() {
@@ -101,7 +105,8 @@ async function openGame(ctx, tag, pg) {
 const step = (page, n = 1) => page.evaluate(async ([n, dt]) => {
   const mc = window.__vtMC || (window.__vtMC = new MessageChannel());
   const turn = () => new Promise((r) => { mc.port1.onmessage = () => r(); mc.port2.postMessage(0); });
-  for (let i = 0; i < n; i++) { if (i) await turn(); window.__vt.step(dt); }
+  // the director's dt(): 1/60 s, or less inside a slow-mo segment (rate keys) — game time per output frame
+  for (let i = 0; i < n; i++) { if (i) await turn(); window.__vt.step(window.__director ? window.__director.dt() : dt); }
   return window.__vt.frame;
 }, [n, DT]);
 
@@ -116,10 +121,19 @@ async function bootSegment(page, id, tag, pg) {
   }
   log(`${tag} booted in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   await page.evaluate((id) => window.__director.init(id), id);
+  // edit cut: the setup (room loads, sound bank decode) runs with rendering off — the simulation is the same, and the
+  // rendered preroll afterwards warms up shaders / textures (other cuts keep their exact old behaviour)
+  if (CUT === 'edit') await page.evaluate(() => window.__director.fast(true));
   for (let i = 0; ; i++) {
     const st = await page.evaluate((dt) => { window.__vt.step(dt); return window.__director.status; }, DT);
-    if (st === 'ready') break;
+    if (st === 'ready') { if (CUT === 'edit') await page.evaluate(() => window.__director.fast(false)); break; }
     if (st.startsWith('skip:') || st.startsWith('error:')) return st;
+    if (CUT === 'edit') {
+      // rendering is off during an edit setup: give real async work (sample decode, room loads) real time per step
+      if (Date.now() - t0 > 240000) return 'error:setup timeout';
+      await new Promise((r) => setTimeout(r, 8));
+      continue;
+    }
     if (i > 3000) return 'error:setup timeout';
     if (i % 20 === 0) await new Promise((r) => setTimeout(r, 20));   // let real async work (image decode) progress
   }
@@ -137,6 +151,8 @@ async function renderSegment(seg, wi, from = 0, to = Infinity) {
   const tag = `[w${wi}:${seg.id}${from || to < Infinity ? `:${from}-${to}` : ''}]`;
   const dir = join(FR, seg.id);
   mkdirSync(dir, { recursive: true });
+  // edit sources: only the window [win0, win1) is captured (frames keep their absolute numbers)
+  if (seg.win && !opt.at) { from = Math.max(from, Math.round(seg.win[0] * FPS)); to = Math.min(to, Math.round(seg.win[1] * FPS)); }
   const total = Math.min(LIMIT, Math.round(seg.dur * FPS), to);
   const fname = (i) => join(dir, String(i).padStart(5, '0') + '.' + EXT);
   let first = from; if (!opt.at) while (first < total && existsSync(fname(first))) first++;
@@ -147,7 +163,7 @@ async function renderSegment(seg, wi, from = 0, to = Infinity) {
     const o = await openGame(B.ctx, tag, seg.page); page = o.page; const cdp = o.cdp;
     const st = await bootSegment(page, seg.id, tag, seg.page);
     if (st !== 'ready') { log(`${tag} ${st}`); writeFileSync(join(dir, 'status.txt'), st); return { id: seg.id, status: st, frames: 0 }; }
-    const gl = await page.evaluate(() => { const g = (window.__l3dGame || window.__showcase).engine.renderer.getContext(); const e = g.getExtension('WEBGL_debug_renderer_info'); return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : '?'; });
+    const gl = await page.evaluate(() => { const g = (window.__l3dGame || window.__showcase || window.__exp).engine.renderer.getContext(); const e = g.getExtension('WEBGL_debug_renderer_info'); return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : '?'; });
     log(`${tag} ready · ${W}x${H} · GL ${gl} · preroll ${seg.preroll ?? 90} · frames ${first}..${total - 1}`);
     await step(page, seg.preroll ?? 90);
     await page.evaluate(() => window.__director.go());
@@ -204,8 +220,9 @@ async function captureAudio(seg, wi) {
     await page.evaluate(() => window.__director.fast(true));
     const t0 = Date.now();
     for (let i = 0; i < total; i += 60) await step(page, Math.min(60, total - i));
-    const cap = await page.evaluate(() => ({ t0: window.__director.t0, marks: window.__director.marks, log: window.__VT_AUDIO_LOG || [] }));
-    cap.dur = total / FPS; cap.frames = total; cap.id = seg.id;
+    const cap = await page.evaluate(() => ({ t0: window.__director.t0, simT: window.__director.simT, marks: window.__director.marks, log: window.__VT_AUDIO_LOG || [] }));
+    // simDur: game seconds the capture covers (≠ output seconds in a slow-mo segment)
+    cap.dur = total / FPS; cap.frames = total; cap.id = seg.id; cap.simDur = seg.rate ? cap.simT + 1 / FPS : cap.dur;
     writeFileSync(file, JSON.stringify(cap));
     const voices = cap.log.filter((e) => e.k === 'voice');
     log(`${tag} captured ${total} frames in ${((Date.now() - t0) / 1000).toFixed(0)} s · ${cap.log.length} events, ${voices.length} voices · marks ${cap.marks.map(([n, t]) => `${n}@${t.toFixed(2)}`).join(' ')}`);
@@ -246,9 +263,9 @@ if (!opt['assemble-only'] && !opt['markers-only']) {
     if (opt.fresh && !opt.at) rmSync(join(FR, s.id), { recursive: true, force: true });
     if (AUDIO && !opt.at) q.push({ s, audio: true });
     if (opt['audio-only']) continue;
-    const n = Math.min(LIMIT, Math.round(s.dur * FPS));
+    const n = Math.min(LIMIT, Math.round((s.win ? s.win[1] : s.dur) * FPS)), w0 = s.win ? Math.round(s.win[0] * FPS) : 0;
     if (!CH || opt.at) q.push({ s, a: 0, b: Infinity });
-    else for (let a = 0; a < n; a += CH) q.push({ s, a, b: Math.min(n, a + CH) });
+    else for (let a = w0; a < n; a += CH) q.push({ s, a, b: Math.min(n, a + CH) });
   }
   const t0 = Date.now();
   await Promise.all(Array.from({ length: Math.min(WORKERS, q.length) }, async (_, wi) => {
@@ -266,6 +283,11 @@ if (shared) { await shared.close().catch(() => {}); shared = null; }
 // no frames needed (run with --audio-only first); the picture is assumed complete (segment length = dur)
 if (opt['markers-only']) {
   await soundtrack(segs.map((s) => ({ ...s, n: Math.min(LIMIT, Math.round(s.dur * FPS)), dir: join(FR, s.id) })).filter((p) => existsSync(join(p.dir, 'audio.json'))), null);
+} else if (CUT === 'edit' && !opt['no-assemble'] && !opt.at) {
+  // the edit trailer: beat-synced composition of the source shots + music + game sound (scripts/video/edit-compose.mjs)
+  const C = await import(pathToFileURL(join(here, 'edit-compose.mjs')).href);
+  await C.compose({ root: ROOT, out: OUT, frames: FR, ext: EXT, name: NAME, w: Math.round(W * DSF / 2) * 2, h: Math.round(H * DSF / 2) * 2, encoder: ENC, crf: CRF,
+    audio: AUDIO, chrome: EXE, args: ARGS, gpu: GPU, profile: opt.profile, segs, opt });
 } else if (!opt['no-assemble'] && !opt.at) {
   const parts = [];
   for (const s of segs) {

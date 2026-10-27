@@ -23,10 +23,17 @@
  * Without space.solidTop the old behaviour holds exactly: free() = false is a wall.
  *
  * Flight (setFlight(h), mage levitation, src/flight): gravity and jumps are off and the feet glide to h metres above
- * the support under the body. Height is visual only — horizontally a point is passable only if free() is true and
- * nothing unjumpable (solidTop = Infinity) is there, so x/y (what the city sends to the site) never leave the walk
- * grid; grid gaps and grid-blocked tops are walls while flying. setFlight(null) drops back to normal physics (a short
- * fall, onLand fires); setSpace / teleport end a flight.
+ * the support under the body. setFlight(null) drops back to normal physics (a short fall, onLand fires);
+ * setSpace / teleport end a flight.
+ *  - with a 3D fly map (setFlyMap(fn), city 'px' space only): free 3D movement. fn(x, y) = the absolute top (m) of
+ *    whatever is there (roof, rock, lamp, fence, water surface, ground), Infinity = the map edge. A point is passable
+ *    iff its top ≤ feet + step, so you fly over rivers / fences / walk-grid gaps, bump into walls below their top,
+ *    and stand on roofs. After a landing the controller stays in this "3D" mode (walking on the roof, jumping,
+ *    falling off its edge) until the hero stands on a point the normal walk rules accept at the same height — then
+ *    the normal rules (walk grid + solidTop) are back. x/y may then be off the walk grid: the site adapter sends the
+ *    nearest walkable point instead (src/flight/sendpoint.ts).
+ *  - without one (rooms, tests, the fly map not built yet): x/y stay on the walk grid — a point is passable only if
+ *    free() is true and nothing unjumpable is there; grid gaps and grid-blocked tops are walls while flying.
  */
 import type { CityLayout, Unsub } from '../contracts';
 import type { Input, PlayerController } from '../contracts/modules';
@@ -114,6 +121,13 @@ export interface PlayerControllerEx extends PlayerController {
   setFlight(h: number | null): void;
   /** True while setFlight(h) is active. */
   readonly flying: boolean;
+  /**
+   * The 3D fly map for the city space (see the header): absolute top (m) at (x, y) px, Infinity = out of bounds;
+   * null = none (flight stays on the walk grid). Removing it while off the walk grid puts the hero back on it.
+   */
+  setFlyMap(fn: ((x: number, y: number) => number) | null): void;
+  /** True while the free 3D rules apply (flying with a fly map, or standing / walking on a roof after it). */
+  readonly free3d: boolean;
 }
 
 const WAYPOINT_EPS = 0.12;   // m
@@ -192,6 +206,9 @@ export function createPlayerController(
   let reach = STEP;                  // current step-up margin (STEP grounded, AIR_STEP airborne)
   let voidWalk = false;              // grounded inside a grid gap: walking on within it is allowed
   let flyH: number | null = null;    // flight height above the support (m) or null
+  let flyMap: ((x: number, y: number) => number) | null = null;   // 3D fly map (city px space)
+  let off3d = false;                 // free 3D rules active (see header)
+  let use3d = false;                 // off3d && a fly map && the px space — cached per update
   // auto-walk
   let path: [number, number][] | null = null;
   let wp = 0;
@@ -206,6 +223,10 @@ export function createPlayerController(
   let lastVoid = false;
   function pointSupport(px: number, py: number, hi: number, voidOk: boolean): number {
     lastVoid = false;
+    if (use3d) {
+      const t = flyMap!(px, py);
+      return t <= hi + reach ? t : NaN;   // Infinity (the map edge) / NaN never pass
+    }
     const top = hasTop ? fTop(px, py) : (fFree(px, py) ? -Infinity : Infinity);
     if (top === Infinity) return NaN;
     if (flyH !== null && hasTop && !fFree(px, py)) return NaN;   // flying: x/y stay on the walk grid
@@ -236,6 +257,12 @@ export function createPlayerController(
   /** Support under the body ignoring blocked probes (for standing / landing): highest reachable surface. */
   function supportUnder(px: number, py: number, hi: number): number {
     // ground: the centre (centre of mass decides when you step off an edge); solid tops: any probe (crate edge)
+    if (use3d) {
+      let s = top3(px, py, hi), t = top3(px + rx, py, hi); if (t > s) s = t; t = top3(px - rx, py, hi); if (t > s) s = t;
+      t = top3(px, py + ry, hi); if (t > s) s = t; t = top3(px, py - ry, hi); if (t > s) s = t;
+      if (s === -Infinity) { const c = flyMap!(px, py); s = c < Infinity ? c : fGround(px, py); }   // inside something (fly map changed)
+      return s;
+    }
     let s = fGround(px, py);
     if (!hasTop) return s;
     let t = topH(px, py, hi); if (t > s) s = t;
@@ -248,8 +275,14 @@ export function createPlayerController(
     const top = fTop(ax, ay);
     return top < Infinity && top <= hi + reach ? top : -Infinity;
   }
+  /** Reachable fly-map top (m) at one point for feet at `hi`, or -Infinity. */
+  function top3(ax: number, ay: number, hi: number): number {
+    const t = flyMap!(ax, ay);
+    return t <= hi + reach ? t : -Infinity;
+  }
   /** Truly inside something solid (bad spawn / server teleport)? */
   function stuck(px: number, py: number, hi: number): boolean {
+    if (use3d) { const t = flyMap!(px, py); return t < Infinity && t > hi + reach + 0.3; }
     if (!hasTop) return !fFree(px, py);
     const top = fTop(px, py);
     if (top === Infinity) return true;
@@ -265,7 +298,7 @@ export function createPlayerController(
     const sx = dx / n, sy = dy / n;
     let blocked = 0;
     for (let i = 0; i < n; i++) {
-      voidWalk = !air && hasTop && !fFree(x, y) && fTop(x, y) === -Infinity;
+      voidWalk = !use3d && !air && hasTop && !fFree(x, y) && fTop(x, y) === -Infinity;
       // strict 5-point test when the body currently fits, else the centre only (squeezing out of a tight spot)
       const here = bodySupport(x, y, hi, true, true);
       const strict = here === here;
@@ -303,9 +336,32 @@ export function createPlayerController(
   }
   function resetVertical(): void {
     // on teleport we stand on the ground (not on top of a crate we were placed into)
+    off3d = false; use3d = false; flyH = null;
     ground = supportUnder(x, y, fGround(x, y));
     fy = ground; vy = 0; air = false; jumped = false; sinceGround = 0; anchorX = x; anchorY = y; apex = fy;
-    flyH = null;
+  }
+  /** Back from the 3D rules once the hero stands where the normal rules accept him at the same height. */
+  function maybeLeave3d(): void {
+    if (!off3d || flyH !== null || air) return;
+    use3d = false;
+    const n = pointSupport(x, y, fy, false);
+    if (n === n && Math.abs(n - fy) < 0.2 && !stuck(x, y, fy)) { off3d = false; anchorX = x; anchorY = y; }
+    else use3d = true;
+  }
+  /** Closest point (px) the normal rules accept, searched in rings around (x, y); null if none within ~6 m. */
+  function nearestNormal(): [number, number] | null {
+    const was = use3d; use3d = false;
+    try {
+      const step = 0.16 / kx, stepY = 0.16 / kz;
+      for (let r = 0; r <= 40; r++) {
+        for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) {
+          if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
+          const px = x + i * step, py = y + j * stepY;
+          if (fFree(px, py) && !stuck(px, py, fGround(px, py))) return [px, py];
+        }
+      }
+      return null;
+    } finally { use3d = was; }
   }
 
   const ctl: PlayerControllerEx = {
@@ -323,6 +379,20 @@ export function createPlayerController(
     get space() { return space; },
     get units() { return units; },
     get flying() { return flyH !== null; },
+    get free3d() { return off3d && flyMap !== null && units === 'px'; },
+
+    setFlyMap(fn) {
+      flyMap = fn;
+      if (fn || !off3d) return;
+      // the fly map went away while we were off the walk grid: back onto it (a roof is not walkable without it)
+      off3d = false; use3d = false;
+      if (units === 'px') {
+        const p = nearestNormal();
+        const keep = flyH;
+        if (p) { x = p[0]; y = p[1]; vx = 0; vz = 0; speed = 0; clearPath(); resetVertical(); }
+        if (keep !== null) { flyH = keep; air = true; jumped = true; }
+      }
+    },
 
     setFlight(h) {
       if (h === null || !(h >= 0)) {
@@ -333,6 +403,7 @@ export function createPlayerController(
       }
       if (flyH === null) { clearPath(); air = true; jumped = true; vy = 0; bufferT = 0; }
       flyH = h;
+      if (flyMap && units === 'px') off3d = true;
     },
 
     teleport(nx, ny) {
@@ -370,6 +441,7 @@ export function createPlayerController(
 
     update(dt, input: PlayerInput, yaw) {
       if (!(dt > 0)) return false;
+      use3d = off3d && flyMap !== null && units === 'px';
       const inp = input as PlayerInput | undefined;
       const mx = inp?.move?.x || 0, my = inp?.move?.y || 0;
 
@@ -467,6 +539,8 @@ export function createPlayerController(
       } else {
         air = true; jumped = false; vy = 0; apex = fy; sinceGround = 0;   // walked off an edge: fall
       }
+
+      maybeLeave3d();
 
       if (path && !moved && moving && ms < 0.01) {
         // path blocked (walk grid mismatch): give up instead of pushing forever

@@ -152,3 +152,43 @@ The picture is captured in virtual time, so the sound is not recorded but **rebu
 **Narration** stays separate and optional: `.markers.json` → `narration.slots` (start, ≤ 6 s, suggested line,
 checked not to sit within 0.6 s of the coins / stone break / door) — `narration.mjs` ducks the game sound by 4–6 dB
 (`--duck=5`) under each clip and re-masters the sum.
+
+## Edit trailer (`--cut=edit`: `edit.ts` + `edit-cut.mjs` + `edit-compose.mjs`)
+
+A ≈ 62 s «эдит»: ADHD pace, fast cuts on the beat (0.4–1.7 s, a few 2.6 s), 2×2 / 3×3 grids of different features,
+punch-ins on beats, whip pans, freeze frames with big ironic captions, flashes, a real slow-motion «!идея бум» on the
+big drop, a title card and the end card with the install link. Music: `voice/music/edit-v1.mp3` (Lyria, 139.9 BPM,
+outside the repo; see docs/ASSETS.md) — the cut uses bars 0–31 of the track, then jumps to its last brutal bar
+(101.24 s) for the final hit and its cute music-box tail under the end card.
+
+Two stages, so the deterministic capture stays untouched:
+1. **Sources** (`edit.ts`, `cut: 'edit'` segments → `frames-edit/<id>/`): short full-frame takes of every feature,
+   driven like the gameplay cut (real keys, LMB, emulated pointer lock, the game's sound captured). Reused takes are
+   windows (`win`) of the promo segments (fair, gear, map, shop, mine, showcase); only the window is captured, the
+   rest is fast-forwarded with rendering off. `rate` keys make a REAL slow motion: the director steps the game by
+   `1/60 s × rate` per output frame (`__director.dt()`), the choreography runs on game time (`simT`). An edit setup
+   runs with rendering off (rooms and the sound bank load in real time), the rendered preroll warms up.
+2. **Composition**: `edit-cut.mjs` writes the shot list on the beat grid (`scripts/video/edit-grid.json`, from
+   `voice/music/edit-beats.py`) into `video/edit/timeline.json` (clips with source-time maps, boxes, zooms, punches,
+   whips, freezes; captions; cards; flashes; shakes) and lints it (no gaps, source times inside the windows);
+   `edit-compose.mjs` draws every frame on a 2D canvas in headless Chrome as a pure function of the frame number,
+   pipes the JPEGs into ffmpeg, then mixes the music (leads) with the clips' game sound under it (`sfx` dB per clip,
+   slow-mo slices pitched down) and masters ONE static gain to −14 LUFS, ≤ −1 dBTP measured on the encoded AAC.
+
+```bash
+npm run build                                       # dist-dev/ (game, showcase, expedition)
+export CHROMIUM=/usr/bin/google-chrome
+node scripts/video/edit-cut.mjs                     # timeline (+ lint) → video/edit/timeline.json
+node scripts/video/render.mjs --cut=edit            # sources + sound captures → compose → video/legion-3d-edit.mp4
+node scripts/video/render.mjs --cut=edit --gpu --profile=C:\l3d-chrome --workers=3     # Windows GPU box
+node scripts/video/render.mjs --cut=edit --segments=e-boom --w=960 --h=540 --at=1,2.4,3   # stills of a source
+node scripts/video/edit-compose.mjs --still=5.5,35 --w=960 --h=540   # composed stills → video/edit/still-<t>.jpg
+node scripts/video/edit-compose.mjs --from=29 --to=41 --w=640 --h=360 --name=edit-test  # a short composed test
+node scripts/video/edit-compose.mjs --music=D:\music\edit-v1.mp3     # recompose only (sources exist), other machine
+```
+
+Outputs (`video/`): `frames-edit/<id>/` (+ `audio.json`, `audio.wav`), `edit/timeline.json`,
+`legion-3d-edit.video.mp4` (picture), `.raw.wav` (mix), `.wav` (master), `.mp4`, `.audio.json` (loudness, sfx list).
+The compositor loads Dela Gothic One + Golos Text from Google Fonts (dev tool only — it logs FALLBACK without them).
+On Windows copy `scripts/video/{render,audio,edit-cut,edit-compose}.mjs`, `scripts/video/edit-grid.json`,
+`video/bundle/{director,audio}.js`, `dist-dev/{game,showcase,expedition}.*` and the music.

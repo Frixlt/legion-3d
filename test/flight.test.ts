@@ -67,7 +67,7 @@ describe('flight: controller (setFlight)', () => {
     expect(jumps).toBe(1);
   });
 
-  it('x/y stay on the walk grid however you fly: walls, benches, the ledge gap and the city edge stop you', () => {
+  it('without a 3D fly map (rooms, map not built yet) x/y stay on the walk grid: walls, benches, the ledge gap and the city edge stop you', () => {
     let seed = 7;
     const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
     for (const start of [[1000, 1250], [2000, 1280], [1500, 1580], [100, 820], [3900, 1990]] as const) {
@@ -84,7 +84,7 @@ describe('flight: controller (setFlight)', () => {
     }
   });
 
-  it('flying over the ledge does not cross the walk-grid gap (it would when jumping)', () => {
+  it('without a fly map flying over the ledge does not cross the walk-grid gap (it would when jumping)', () => {
     const p = mk(); p.teleport(2500, 1550);
     p.setFlight(4);
     for (let i = 0; i < 240; i++) p.update(DT, inp(0, 1), Math.PI);   // towards +y

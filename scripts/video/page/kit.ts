@@ -97,6 +97,14 @@ export function travel(t: number, len: number, v: number, acc = 0.8): { s: numbe
   return { s, total };
 }
 
+/** Game-time rate at output second t: piecewise-linear keys [[t, rate], …] (held before the first / after the last). */
+export function rateAt(keys: [number, number][], t: number): number {
+  if (!keys.length) return 1;
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) if (t < keys[i][0]) { const [a, ra] = keys[i - 1], [b, rb] = keys[i]; return ra + (rb - ra) * (t - a) / (b - a); }
+  return keys[keys.length - 1][1];
+}
+
 /* ------------------------------------------------------------------ game access */
 export interface G {
   g: any;           // window.__l3dGame

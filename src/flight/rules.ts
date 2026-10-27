@@ -7,8 +7,10 @@
  *          flight follows the ground); X all the way down = a soft landing; double-tap Space = land;
  *  - land: the height glides to 0, then flight ends (setFlight(null): the controller drops the last centimetres and
  *          fires onLand as usual).
- * Flight is purely visual: the controller keeps x/y on the walk grid (src/engine/player.ts), the site gets the same
- * go() points as when walking.
+ * Free 3D flight (owner feedback 2026-10-27): with the city's fly map the controller moves in 3D — over the canal,
+ * fences and the walk-grid gaps, bumping into walls only below their tops, landing on roofs (src/engine/player.ts,
+ * src/flight/heightfield.ts). The site only ever gets walkable go() points (src/flight/sendpoint.ts).
+ * Down = X or Ctrl. Over water a landing is refused: the hover keeps `floor` metres (FlightInput.floor).
  */
 import type { Appearance } from '../contracts';
 
@@ -49,6 +51,8 @@ export interface FlightInput {
   allowed: boolean;
   /** Max height here (FLY.maxStreet or FLY.maxRoom). */
   max: number;
+  /** Lowest hover height here (m): > 0 where you may not land (water); 0 / undefined = landing allowed. */
+  floor?: number;
 }
 
 export class FlightLogic {
@@ -91,17 +95,19 @@ export class FlightLogic {
       else return null;
     }
     if (!i.allowed && this.phase === 'fly') this.phase = 'land';
+    const floor = Math.min(i.floor ?? 0, i.max);
     if (this.phase === 'fly') {
       if (i.up && !i.down && this.h < i.max) this.h = Math.min(i.max, this.h + FLY.rise * dt);
       else if (i.down && !i.up) this.h -= FLY.sink * dt;
       if (this.h > i.max) this.h = Math.max(i.max, this.h - FLY.land * dt);   // a lower ceiling (room): glide down to it
+      if (this.h < floor) this.h = floor;
       if (this.h < 0) this.h = 0;
-      if (i.down && this.h <= 0 && i.above <= FLY.landEps * 3) return this.end();
+      if (floor <= 0 && i.down && this.h <= 0 && i.above <= FLY.landEps * 3) return this.end();
       return this.h;
     }
-    // landing glide
-    this.h = Math.max(0, Math.min(this.h, i.above + 0.2) - FLY.land * dt);
-    if (this.h <= 0 && i.above <= FLY.landEps) return this.end();
+    // landing glide (over water: keep hovering at the floor until the hero is over something to land on)
+    this.h = Math.max(floor, Math.min(this.h, i.above + 0.2) - FLY.land * dt);
+    if (floor <= 0 && this.h <= 0 && i.above <= FLY.landEps) return this.end();
     return this.h;
   }
 

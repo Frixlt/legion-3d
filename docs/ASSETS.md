@@ -44,3 +44,9 @@ Rebuild after changing the list: download the sources into `.local/sound/` (layo
 reuses `land_0…2` (pitched up).
 | src/audio/sounds/boom_0.ogg | synthesised, src/audio/tools/gen-combat-sfx.mjs (boom) | CC0 | Legion 3D |
 | src/audio/sounds/fuse_0.ogg | synthesised, src/audio/tools/gen-combat-sfx.mjs (fuse) | CC0 | Legion 3D |
+
+## Video music (not in the extension)
+
+| file | used for | source | licence | author |
+|---|---|---|---|---|
+| `voice/music/edit-v1.mp3` (outside the repo; beat grid in `scripts/video/edit-grid.json`) | the edit trailer (`scripts/video/render.mjs --cut=edit`) | generated 2026-10-27 with Google Lyria 3 (`google/lyria-3-pro-preview` via OpenRouter, prompt in `voice/music/edit-v1.json`), instrumental, no samples of third-party recordings | AI-generated for this project (no third-party recording; use is governed by the Google Lyria / OpenRouter terms of service) | Legion 3D (generated) |

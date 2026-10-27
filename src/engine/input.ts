@@ -7,7 +7,8 @@
  *  - setGameplay(false) (menu open, chat): movement/look read zero, onKey only gets 'Escape' / 'Enter' / 'NumpadEnter'
  *    (menus handle their own hotkeys with their own listeners);
  *  - Ctrl/Meta/Alt chords are never treated as game keys (browser shortcuts stay intact).
- * Held keys are released on window blur, tab hide, focusing a text field and Ctrl/Alt/Meta chords.
+ * Held keys are released on window blur, tab hide, focusing a text field and Ctrl/Alt/Meta chords — except a bare
+ * Ctrl press while `holdCtrl` is on (mage flight: Ctrl = down), which is held like a game key.
  *
  * Modal stack: every DOM card / window we open over the game (mine cards and journal, the shop buy card…) calls
  * pushModal(id, close) and popModal(id) when it goes. While any modal is open, gameplay reads false whatever
@@ -31,6 +32,13 @@ export interface InputEx extends Input {
   readonly modals: readonly string[];
   /** Close the topmost modal through its close callback (Esc). False when none is open or it has no callback. */
   closeTopModal(): boolean;
+  /**
+   * While true (a mage is flying: Ctrl = down), a bare Ctrl press is a held game key: it does not release WASD.
+   * Any other key pressed with Ctrl is still a browser chord (released as usual).
+   */
+  holdCtrl: boolean;
+  /** Ctrl held as a game key (only while holdCtrl, gameplay, not typing). */
+  readonly ctrl: boolean;
 }
 
 const JUMP = 'Space';
@@ -72,6 +80,7 @@ export function createInput(target: HTMLElement): InputEx {
   let lastLockReq = 0;
   let dropNext = 0;          // drop the first events after lock (Chrome sends a jump)
   let jumpAt = -1;           // performance.now() of the last unconsumed Space press
+  let holdCtrl = false;      // a bare Ctrl is a game key (flight: down)
   const keyFns: ((code: string, e: KeyboardEvent) => boolean | void)[] = [];
 
   function recompute(): void {
@@ -107,7 +116,11 @@ export function createInput(target: HTMLElement): InputEx {
       if (MENU_KEYS.has(code) && !e.repeat) dispatch(code, e);
       return;
     }
-    if (chord) { releaseAll(); return; }
+    if (chord) {
+      // a bare Ctrl while flying (Ctrl = down): keep the held movement keys
+      if (holdCtrl && (code === 'ControlLeft' || code === 'ControlRight') && !e.metaKey && !e.altKey) { down.add(code); return; }
+      releaseAll(); return;
+    }
     if (!down.has(code)) { down.add(code); recompute(); }
     if (PREVENT.has(code)) e.preventDefault();
     if (code === JUMP && !e.repeat) jumpAt = performance.now();
@@ -163,6 +176,9 @@ export function createInput(target: HTMLElement): InputEx {
     move,
     get run() { return gameplay && (down.has('ShiftLeft') || down.has('ShiftRight')) && !isTyping(); },
     get jump() { return gameplay && down.has(JUMP) && !isTyping(); },
+    get holdCtrl() { return holdCtrl; },
+    set holdCtrl(v: boolean) { holdCtrl = v; if (!v) { down.delete('ControlLeft'); down.delete('ControlRight'); } },
+    get ctrl() { return holdCtrl && gameplay && (down.has('ControlLeft') || down.has('ControlRight')) && !isTyping(); },
     consumeJump() {
       if (jumpAt < 0) return false;
       const fresh = gameplay && performance.now() - jumpAt <= JUMP_STALE_MS;

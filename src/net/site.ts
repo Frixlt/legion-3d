@@ -8,6 +8,7 @@ import type { SiteSession, ArtProvider } from '../contracts/modules';
 import { createStore, type StoreWriter } from '../store/store';
 import { SX, SZ } from '../world/coords';
 import type { Bus } from '../bridge/bridge';
+import { createGoSender } from '../flight/sendpoint';
 
 /* ------------------------------------------------------------------ site globals (untyped) */
 const W = window as any;
@@ -294,27 +295,22 @@ export async function connectSite(opts: { onStatus?: (s: string) => void } = {})
   if (me.ql) store.setQuest(me.ql);
 
   /* ---------------- own movement → site ---------------- */
-  let lastSent: [number, number] | null = null, lastSendAt = 0, pend: [number, number] | null = null, pendT = 0, movesPaused = false;
-  /** Inside our own 3D rooms the street hero must not move: drop pending go and ignore moveTo until resumed. */
-  const pauseMoves = (on: boolean) => { movesPaused = on; if (on) { pend = null; if (pendT) { clearTimeout(pendT); pendT = 0; } } };
-  const flush = () => {
-    if (pendT) { clearTimeout(pendT); pendT = 0; }
-    if (!pend || movesPaused) return;
-    const [x, y] = pend; pend = null;
+  // throttled LGCity.go(); every point is projected onto the walk grid first (the 3D hero may stand on a roof or
+  // fly over the canal — src/flight/sendpoint.ts)
+  const sender = createGoSender({
+    go: (x, y) => safe(() => W.LGCity.go(x, y), undefined),
+    map: () => mapRef,
     // LGCity.go() closes an open building interior (goPoint → closePanel): never move while one is shown
-    if (anyShown('.cy-room')) return;
-    lastSent = [x, y]; lastSendAt = performance.now();
-    safe(() => W.LGCity.go(x, y), undefined);
-  };
-  const moveTo = (x: number, y: number) => {
-    if (classic || movesPaused) return;
-    if (lastSent && Math.hypot(x - lastSent[0], (y - lastSent[1]) * 2) < 10) return;
-    pend = [Math.round(x), Math.round(y)];
-    // the server answers 429 «не так быстро» to bursts (seen live at ~3/s): stay at ≤ 2 go/s, the site's client
-    // walks our 2D hero along the path between them, so other players still see smooth motion
-    const wait = GO_MS - (performance.now() - lastSendAt);
-    if (wait <= 0) flush(); else if (!pendT) pendT = window.setTimeout(flush, wait);
-  };
+    canSend: () => !anyShown('.cy-room'),
+    now: () => performance.now(),
+    setTimer: (fn, ms) => window.setTimeout(fn, ms),
+    clearTimer: (id) => clearTimeout(id),
+    minMs: GO_MS,
+  });
+  /** Inside our own 3D rooms the street hero must not move: drop pending go and ignore moveTo until resumed. */
+  const pauseMoves = (on: boolean) => sender.pause(on);
+  const flush = () => sender.flush();
+  const moveTo = (x: number, y: number) => { if (!classic) sender.move(x, y); };
 
   /* ---------------- overlays (site interiors, mine, trade, dialogs) ---------------- */
   let ovAt = 0, ovVal: string | null = null;
@@ -344,7 +340,7 @@ export async function connectSite(opts: { onStatus?: (s: string) => void } = {})
       enter3d();
       // the hero may have walked in the 2D city meanwhile: continue from where the site has it
       const p = safe(() => W.LGCity.debug()?.me as [number, number] | undefined, undefined);
-      if (p && store.me && Math.hypot(p[0] - store.me.x, p[1] - store.me.y) > 40) { store.me.x = p[0]; store.me.y = p[1]; lastSent = null; }
+      if (p && store.me && Math.hypot(p[0] - store.me.x, p[1] - store.me.y) > 40) { store.me.x = p[0]; store.me.y = p[1]; sender.reset(); }
     }
   };
 

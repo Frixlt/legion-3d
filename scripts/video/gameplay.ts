@@ -18,12 +18,12 @@ import { type Segment, FPS, walker, routed, cam, mode, uiOpacity, aimTo, until }
 
 /* ------------------------------------------------------------------ real input */
 /** Dispatch a key event the way a keyboard would (bubbles from <body> to document and window). */
-function key(type: 'keydown' | 'keyup', code: string): void {
+export function key(type: 'keydown' | 'keyup', code: string): void {
   const k = code.startsWith('Key') ? code.slice(3).toLowerCase() : code === 'Space' ? ' ' : code;
   (document.body || document).dispatchEvent(new KeyboardEvent(type, { code, key: k, bubbles: true, cancelable: true, composed: true }));
 }
 /** A canvas click (mousedown + mouseup, LMB): grabs the pointer, or attacks / uses while it is held. */
-function click(G: G, type: 'down' | 'up' | 'both' = 'both'): void {
+export function click(G: G, type: 'down' | 'up' | 'both' = 'both'): void {
   const c = G.g.engine.renderer.domElement as HTMLCanvasElement, r = c.getBoundingClientRect();
   const o = { bubbles: true, cancelable: true, button: 0, buttons: type === 'up' ? 0 : 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
   if (type !== 'up') { c.dispatchEvent(new PointerEvent('pointerdown', o)); c.dispatchEvent(new MouseEvent('mousedown', o)); }
@@ -31,7 +31,7 @@ function click(G: G, type: 'down' | 'up' | 'both' = 'both'): void {
 }
 
 /** Per-segment one-shot triggers and timed key taps (deterministic: a pure function of the segment time). */
-function makeTimeline() {
+export function makeTimeline() {
   const fired = new Set<string>();
   const once = (k: string, cond: boolean, fn: () => void) => { if (cond && !fired.has(k)) { fired.add(k); fn(); } };
   /** Press `code` at time `at` (seconds, any clock) and release it `hold` s later — like a finger on a key. */
@@ -47,7 +47,7 @@ function makeTimeline() {
 }
 
 /** Keep the pointer grabbed like a player would: click back into the game when it is free and nothing is open. */
-function relock(G: G): void {
+export function relock(G: G): void {
   const inp = G.input, rooms = G.g.rooms;
   if (inp.locked || !inp.gameplay || G.ctx.state.menu || rooms.busy || rooms.stage || (inp.modals && inp.modals.length)) return;
   const ph = G.ctx.dev?.photo; if (typeof ph === 'function' && ph().active) return;
@@ -55,8 +55,14 @@ function relock(G: G): void {
 }
 
 /** Start the game's sound like the first click of a player would, wait until every sample is decoded. */
-async function startSound(G: G): Promise<boolean> {
+export async function startSound(G: G): Promise<boolean> {
+  // the game creates its AudioContext only inside a TRANSIENT user activation (navigator.userActivation.isActive on a
+  // pointerup / click / keyup); synthetic events never activate, so the capture page reports one for this gesture
+  const nav = navigator as any;
+  try { Object.defineProperty(nav, 'userActivation', { configurable: true, get: () => ({ isActive: true, hasBeenActive: true }) }); } catch { /* */ }
   window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  try { delete nav.userActivation; } catch { /* */ }
   return until(() => { const e = G.ctx.dev?.sound as any; return !!e && e.bank.size >= 60; }, 120000);
 }
 /** Everything a gameplay segment does first: sound, the lock click, a clean chat log. */
@@ -316,7 +322,7 @@ const GP_WALK: Segment = {
   },
 };
 /** querySelector through open shadow roots (the HUD lives in one). */
-function qsDeep(sel: string): Element | null {
+export function qsDeep(sel: string): Element | null {
   const walk = (r: Document | ShadowRoot): Element | null => {
     const e = r.querySelector(sel); if (e) return e;
     for (const x of r.querySelectorAll('*')) if (x.shadowRoot) { const f = walk(x.shadowRoot); if (f) return f; }

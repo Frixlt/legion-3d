@@ -63,10 +63,19 @@ export default coreFeature({
       eng.setMuted(true, 0); eng.setMuted(false, 0.6); applyMute();
       await loadBank(ac, bank);
     };
-    const GESTURES = ['pointerdown', 'keydown', 'touchstart'] as const;
-    const onGesture = () => { for (const g of GESTURES) window.removeEventListener(g, onGesture, true); void start(); };
-    const ua = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation;
-    if (ua?.hasBeenActive) void start(); else for (const g of GESTURES) window.addEventListener(g, onGesture, true);
+    // Chrome only lets an AudioContext start inside a *transient* user activation. Creating it earlier (sticky
+    // activation from a previous visit, or a key that does not activate — Shift, Esc, F-keys) logs «The AudioContext
+    // was not allowed to start» on chrome://extensions. So create it only while navigator.userActivation.isActive
+    // (fallback: click / pointerup / keyup, which do activate), and keep listening until that happens.
+    const GESTURES = ['pointerup', 'click', 'keyup', 'touchend'] as const;
+    const ua = (navigator as Navigator & { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
+    const activeNow = () => (ua ? ua.isActive : true);
+    const onGesture = () => {
+      if (!activeNow()) return;   // not an activating gesture: wait for the next one
+      for (const g of GESTURES) window.removeEventListener(g, onGesture, true);
+      void start();
+    };
+    if (ua?.isActive) void start(); else for (const g of GESTURES) window.addEventListener(g, onGesture, true);
     offs.push(() => { for (const g of GESTURES) window.removeEventListener(g, onGesture, true); });
 
     const onSettings = (e: Event) => {
