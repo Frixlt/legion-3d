@@ -129,7 +129,9 @@ FIREFOX=/absolute/path/to/firefox GECKODRIVER=/absolute/path/to/geckodriver npm 
 
 The runner also needs `openssl` and `unzip` on PATH to generate a short-lived local test certificate.
 Logs, a screenshot and a JSON result are saved in `e2e/.artifacts/firefox/`.
-CI runs the same check with Playwright's pinned Firefox build. Manual release testing should also
+CI runs the same check with Playwright's pinned Firefox build under `xvfb-run` and Mesa software GL.
+On Linux without a display use `LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a npm run e2e:firefox`;
+plain headless Firefox may fail to create WebGL without an X server. Manual release testing should also
 exercise pointer lock (click, mouse look, Esc, re-lock), fullscreen and sound in a desktop Firefox;
 headless rendering does not establish real GPU performance or browser-level shortcut behavior.
 
