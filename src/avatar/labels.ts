@@ -4,6 +4,21 @@
  */
 import * as THREE from 'three';
 import type { Labels } from '../contracts/modules';
+import type { Mood } from './face';
+
+/** Bubble styles: the chat moods (src/social/mood.ts) plus 'aside' — a small non-chat reaction («ха-ха» of the crowd). */
+export type BubbleStyle = Mood | 'aside';
+interface StyleDef { fill: string; ink: string; edge: string; icon?: 'spark' | 'heart' | 'bang' | 'drop' | 'anger' | 'q' | 'ha'; burst?: boolean; dashed?: boolean }
+export const BUBBLE_STYLES: Record<BubbleStyle, StyleDef> = {
+  happy: { fill: '#fff3c4', ink: '#2b1d18', edge: '#c98a12', icon: 'spark' },
+  laugh: { fill: '#ffe48a', ink: '#2b1d18', edge: '#b9700c', icon: 'ha' },
+  surprised: { fill: '#e6f4ff', ink: '#1d2a4a', edge: '#2b5a8a', icon: 'bang', burst: true },
+  puzzled: { fill: '#eef0ff', ink: '#1d2a4a', edge: '#5a5fa8', icon: 'q' },
+  sad: { fill: '#dcecff', ink: '#1d2a4a', edge: '#4a72a8', icon: 'drop' },
+  love: { fill: '#ffe0ea', ink: '#3a1420', edge: '#d0436c', icon: 'heart' },
+  angry: { fill: '#ffe1d6', ink: '#3a1408', edge: '#c8452a', icon: 'anger', burst: true },
+  aside: { fill: 'rgba(255,250,240,.88)', ink: '#5a4636', edge: '#8a6a52', dashed: true },
+};
 
 const FONT = `"Rubik", "Segoe UI", "Arial", sans-serif`;
 const MAX_CHARS = 90;
@@ -31,6 +46,8 @@ interface Entry {
   plateW: number; plateH: number;
   bubble: THREE.Sprite | null; bubbleCanvas: HTMLCanvasElement | null; bubbleTex: THREE.CanvasTexture | null; bubbleMat: THREE.SpriteMaterial | null;
   bubbleKey: string; bubbleW: number; bubbleH: number;
+  /** Temporary bubble style and until when (performance.now ms); '' = the plain bubble. */
+  bubbleStyle: BubbleStyle | ''; styleUntil: number; drawnStyle: BubbleStyle | '';
   bubbleUntil: number; bubbleShown: number;   // ms timestamp; fade 0..1
   fade: number;
   me: boolean;
@@ -101,7 +118,7 @@ class LabelsImpl implements Labels {
     plate.center.set(0.5, 0); plate.renderOrder = 10; plate.visible = false;
     this.root.add(plate);
     e = { login, plate, plateKey: '', plateCanvas, plateTex, plateMat, plateW: 1, plateH: 0.2,
-      bubble: null, bubbleCanvas: null, bubbleTex: null, bubbleMat: null, bubbleKey: '', bubbleW: 1, bubbleH: 0.3, bubbleUntil: 0, bubbleShown: 0, fade: 0,
+      bubble: null, bubbleCanvas: null, bubbleTex: null, bubbleMat: null, bubbleKey: '', bubbleW: 1, bubbleH: 0.3, bubbleStyle: '', styleUntil: 0, drawnStyle: '', bubbleUntil: 0, bubbleShown: 0, fade: 0,
       me: false, plateFW: 1, bubbleFW: 1, bubbleFH: 1,
       dist: 1e9, depth: 1, sx: 0, sy: 0, vis: 0, bVis: 0, pScale: 1, pLift: 0, bScale: 1, bTop: 0, lastScale: 1, lastLift: 0 };
     this.map.set(login, e);
@@ -149,7 +166,8 @@ class LabelsImpl implements Labels {
     if (!t) return;
     const now = performance.now();
     e.bubbleUntil = now + Math.max(1000, ms);
-    if (t === e.bubbleKey && e.bubble) return;
+    const style = e.bubbleStyle && now < e.styleUntil ? e.bubbleStyle : '';
+    if (t === e.bubbleKey && e.bubble && style === e.drawnStyle) return;
     e.bubbleKey = t;
     if (!e.bubble) {
       e.bubbleCanvas = document.createElement('canvas'); e.bubbleCanvas.width = 512; e.bubbleCanvas.height = 256;
@@ -160,27 +178,61 @@ class LabelsImpl implements Labels {
       this.root.add(e.bubble);
       e.bubbleShown = 0;
     }
+    this.drawBubble(e, style);
+  }
+
+  /**
+   * Give the bubble of `login` a temporary style for `ms` (the next bubble() within that time is drawn with it too).
+   * Re-renders the canvas twice (now and when it ends) — never per frame.
+   */
+  bubbleStyle(login: string, style: BubbleStyle, ms: number): void {
+    const e = this.entry(login);
+    e.bubbleStyle = style; e.styleUntil = performance.now() + Math.max(200, ms);
+    if (e.bubble && e.bubbleKey && e.drawnStyle !== style) this.drawBubble(e, style);
+  }
+
+  private drawBubble(e: Entry, style: BubbleStyle | '') {
+    e.drawnStyle = style;
+    const sd = style ? BUBBLE_STYLES[style] : null;
     const c = e.bubbleCanvas!, g = c.getContext('2d')!;
-    const font = `600 34px ${FONT}`, lh = 42, pad = 22, maxW = 400;
-    const lines = wrapText(t, maxW, font, 4);
+    const aside = style === 'aside';
+    const font = `${aside ? 'italic 600 30px' : '600 34px'} ${FONT}`, lh = aside ? 36 : 42, pad = aside ? 18 : 22, maxW = 400;
+    const lines = wrapText(e.bubbleKey, maxW, font, 4);
     g.font = font;
     let tw = 0; for (const l of lines) tw = Math.max(tw, g.measureText(l).width);
-    const W = Math.ceil(Math.max(90, tw + pad * 2)), Hb = lines.length * lh + pad * 1.4, tail = 22;
+    const W = Math.ceil(Math.max(90, tw + pad * 2)), Hb = lines.length * lh + pad * 1.4, tail = aside ? 14 : 22;
     g.clearRect(0, 0, c.width, c.height);
     const x0 = Math.round((c.width - W) / 2), y0 = Math.round(c.height - tail - Hb - 6);
-    // bubble with tail
-    g.beginPath();
-    const r = 26;
-    g.moveTo(x0 + r, y0); g.arcTo(x0 + W, y0, x0 + W, y0 + Hb, r); g.arcTo(x0 + W, y0 + Hb, x0, y0 + Hb, r);
-    g.lineTo(c.width / 2 + 16, y0 + Hb); g.lineTo(c.width / 2 - 4, y0 + Hb + tail); g.lineTo(c.width / 2 - 6, y0 + Hb);
-    g.arcTo(x0, y0 + Hb, x0, y0, r); g.arcTo(x0, y0, x0 + W, y0, r); g.closePath();
-    g.fillStyle = '#fffaf0'; g.fill();
-    g.lineWidth = 5; g.strokeStyle = '#2b1d18'; g.lineJoin = 'round'; g.stroke();
-    g.fillStyle = '#2b1d18'; g.textBaseline = 'middle'; g.textAlign = 'center';
+    g.lineJoin = 'round';
+    if (sd?.burst) {
+      // a spiky «shout» outline around the box; the tail is drawn first and covered by the burst's fill
+      const cx = c.width / 2, cy = y0 + Hb / 2, rx = W / 2 + 4, ry = Hb / 2 + 4, n = 22;
+      g.beginPath(); g.moveTo(cx + 16, y0 + Hb - 6); g.lineTo(cx - 4, y0 + Hb + tail); g.lineTo(cx - 10, y0 + Hb - 6); g.closePath();
+      g.fillStyle = sd.fill; g.fill(); g.lineWidth = 5; g.strokeStyle = sd.edge; g.stroke();
+      g.beginPath();
+      for (let i = 0; i < n * 2; i++) {
+        const a = (i / (n * 2)) * Math.PI * 2, out = i % 2 === 1;
+        const px = cx + Math.cos(a) * rx * (out ? 1.08 : 0.97), py = cy + Math.sin(a) * ry * (out ? 1.22 : 0.98);
+        i ? g.lineTo(px, py) : g.moveTo(px, py);
+      }
+      g.closePath();
+    } else {
+      g.beginPath();
+      const r = aside ? 30 : 26;
+      g.moveTo(x0 + r, y0); g.arcTo(x0 + W, y0, x0 + W, y0 + Hb, r); g.arcTo(x0 + W, y0 + Hb, x0, y0 + Hb, r);
+      g.lineTo(c.width / 2 + 16, y0 + Hb); g.lineTo(c.width / 2 - 4, y0 + Hb + tail); g.lineTo(c.width / 2 - 6, y0 + Hb);
+      g.arcTo(x0, y0 + Hb, x0, y0, r); g.arcTo(x0, y0, x0 + W, y0, r); g.closePath();
+    }
+    g.fillStyle = sd?.fill ?? '#fffaf0'; g.fill();
+    g.lineWidth = aside ? 3 : 5; g.strokeStyle = sd?.edge ?? '#2b1d18';
+    if (sd?.dashed) g.setLineDash([10, 8]);
+    g.stroke(); g.setLineDash([]);
+    g.fillStyle = sd?.ink ?? '#2b1d18'; g.textBaseline = 'middle'; g.textAlign = 'center';
     lines.forEach((l, i) => g.fillText(l, c.width / 2, y0 + pad * 0.7 + lh * (i + 0.5)));
     g.textAlign = 'left';
+    if (sd?.icon) drawIcon(g, sd.icon, Math.min(c.width - 28, x0 + W - 6), Math.max(28, y0 + 4), sd.edge);
     e.bubbleTex!.needsUpdate = true;
-    e.bubbleW = c.width / PX_PER_M; e.bubbleH = c.height / PX_PER_M; e.bubbleFW = W / c.width; e.bubbleFH = (c.height - y0) / c.height;
+    e.bubbleW = c.width / PX_PER_M; e.bubbleH = c.height / PX_PER_M; e.bubbleFW = W / c.width; e.bubbleFH = (c.height - Math.max(0, y0 - (sd?.icon ? 20 : 0))) / c.height;
   }
 
   remove(login: string): void {
@@ -279,6 +331,7 @@ class LabelsImpl implements Labels {
       }
       if (e.bubble) {
         const live = now < e.bubbleUntil;
+        if (e.drawnStyle && now >= e.styleUntil) { e.bubbleStyle = ''; if (live) this.drawBubble(e, ''); else e.drawnStyle = ''; }
         e.bubbleShown += ((live && e.bVis ? 1 : 0) - e.bubbleShown) * Math.min(1, dt * (live && e.bVis ? 9 : 6));
         if ((e.bubbleShown < 0.02 && !(live && e.bVis)) || !a) { e.bubble.visible = false; continue; }
         const s = e.bVis ? e.bScale : e.bubble.scale.y / Math.max(1e-6, e.bubbleH);
@@ -305,6 +358,44 @@ class LabelsImpl implements Labels {
   }
 }
 
-/** Labels with the optional extras the integrator may use (configure). */
-export type LabelsEx = Labels & { configure(o: { showMe?: boolean; range?: 'all' | 'near'; max?: number }): void };
+/** A tiny icon at the bubble's top-right corner (vector, no emoji fonts). */
+function drawIcon(g: CanvasRenderingContext2D, kind: NonNullable<StyleDef['icon']>, x: number, y: number, col: string) {
+  g.save(); g.translate(x, y); g.scale(1.3, 1.3); g.lineJoin = 'round'; g.lineCap = 'round';
+  // badge disc
+  g.beginPath(); g.arc(0, 0, 19, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill(); g.lineWidth = 3.5; g.strokeStyle = col; g.stroke();
+  g.fillStyle = col; g.strokeStyle = col;
+  switch (kind) {
+    case 'heart':
+      g.fillStyle = '#ff4f7b';
+      g.beginPath(); g.moveTo(0, 10); g.bezierCurveTo(-17, -1, -8, -15, 0, -5); g.bezierCurveTo(8, -15, 17, -1, 0, 10); g.fill();
+      break;
+    case 'spark':
+      g.fillStyle = '#ffb81c'; g.beginPath();
+      for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 - Math.PI / 2, r = i % 2 ? 5 : 13; i ? g.lineTo(Math.cos(a) * r, Math.sin(a) * r) : g.moveTo(Math.cos(a) * r, Math.sin(a) * r); }
+      g.closePath(); g.fill();
+      break;
+    case 'bang': g.lineWidth = 5; g.beginPath(); g.moveTo(0, -11); g.lineTo(0, 3); g.stroke(); g.beginPath(); g.arc(0, 10, 3, 0, Math.PI * 2); g.fill(); break;
+    case 'q':
+      g.lineWidth = 4.5; g.beginPath(); g.arc(0, -4, 7, Math.PI * 1.1, Math.PI * 2.35); g.quadraticCurveTo(0, 0, 0, 4); g.stroke();
+      g.beginPath(); g.arc(0, 11, 2.8, 0, Math.PI * 2); g.fill();
+      break;
+    case 'drop':
+      g.fillStyle = '#5fb2ff'; g.beginPath(); g.moveTo(0, -12); g.quadraticCurveTo(11, 4, 0, 11); g.quadraticCurveTo(-11, 4, 0, -12); g.fill();
+      break;
+    case 'anger':
+      g.strokeStyle = '#e0402a'; g.lineWidth = 4;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { g.beginPath(); g.moveTo(sx * 3, sy * 11); g.quadraticCurveTo(sx * 3, sy * 3, sx * 11, sy * 3); g.stroke(); }
+      break;
+    case 'ha':
+      g.font = `900 19px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ха', 0, 1);
+      break;
+  }
+  g.restore();
+}
+
+/** Labels with the optional extras the integrator may use (configure, temporary bubble styles). */
+export type LabelsEx = Labels & {
+  configure(o: { showMe?: boolean; range?: 'all' | 'near'; max?: number }): void;
+  bubbleStyle(login: string, style: BubbleStyle, ms: number): void;
+};
 export function createLabels(): LabelsEx { return new LabelsImpl(); }

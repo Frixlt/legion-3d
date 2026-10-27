@@ -52,6 +52,9 @@ const LIST = [
   { name: 'chime_0', src: 'gen/gen_chime_0.wav', af: 'highpass=f=200,lowpass=f=6000', rms: -22, peak: -6 },
   ...nums(2, (i) => ({ name: `groan_${i}`, src: `gen/gen_groan_${i}.wav`, af: 'highpass=f=100,lowpass=f=3000', rms: -21, peak: -5 })),
   ...nums(2, (i) => ({ name: `poof_${i}`, src: `gen/gen_poof_${i}.wav`, af: 'highpass=f=80,lowpass=f=4000', rms: -21, peak: -5 })),
+  // «!идея бум» (src/features/boom.ts): synthesised by gen-combat-sfx.mjs
+  { name: 'boom_0', src: 'gen/gen_boom_0.wav', af: 'highpass=f=28,lowpass=f=3000', rms: -17, peak: -2, max: 2 },
+  { name: 'fuse_0', src: 'gen/gen_fuse_0.wav', af: 'highpass=f=400,lowpass=f=5500', rms: -24, peak: -7 },
   // beds (loops): longer, quieter RMS targets; the mix sets their real level
   { name: 'bed_crickets', src: 'crickets-oneloop.mp3', ch: 2, af: 'highpass=f=1500,treble=g=-3:f=9000:t=s', rms: -26, peak: -6, loop: 16, at: 2 },
   { name: 'bed_wind', src: 'oga/wind1.wav', ch: 1, af: 'highpass=f=60,lowpass=f=2500', rms: -24, peak: -6, loop: 20, at: 8 },

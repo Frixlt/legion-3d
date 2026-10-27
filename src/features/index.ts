@@ -26,10 +26,34 @@ import photo from './photo';
 import whatsnew from './whatsnew';
 import seasonal from './seasonal';
 import combat from './combat';
+import expedition from './expedition';
+import stars from './stars';
+import boats from './boats';
+import landmarks from './landmarks';
+import pawprints from './pawprints';
+import showcase from './showcase';
+import snapshot from './snapshot';
+import netstatus from './netstatus';
+import qualityInfo from './quality-info';
+import mood from './mood';
+import bench from './bench';
+import cheer from './cheer';
+import cheersFx from './cheers-fx';
+import flight from './flight';
+import emotes from './emotes';
+import boom from './boom';
 
 export const FEATURES: (Feature | CoreFeature)[] = [
   settings, itemModels, menus, camera, crowd, labels, doors, controls, rooms, contentRooms, overlay, classic, quest, photo, debug, whatsnew, seasonal, sound,
   combat,
+  expedition,
+  showcase,
+  snapshot,
+  netstatus,
+  qualityInfo,
+  mood, bench, cheer, cheersFx,
+  stars, boats, landmarks, pawprints,
+  flight, emotes, boom,
 ];
 
 /** Run every feature's setup in order. A failing feature is logged and skipped (the game still starts). */

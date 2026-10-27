@@ -114,15 +114,61 @@ function load(file) {
   return new Float32Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.byteLength / 4).slice();
 }
 
-/** Cushion thump + a short cartoon "bonk" (sine with a falling pitch, soft attack) on top. */
-function bonk(file, f0, mix) {
-  const th = load(file), n = Math.max(th.length, len(0.3)), x = new Float32Array(n);
+/**
+ * Cartoon "BONK": a hollow, rounded knock (two inharmonic modes like a coconut / wooden mallet on a head, pitch drops
+ * fast) + a tiny springy "boing" tail (sine with vibrato, falling) + a little of the soft cushion thump for body.
+ * Cute, not violent: soft 4 ms attack, no noise burst, short.
+ */
+function bonk(file, f0, mix, boing) {
+  const th = load(file), n = len(0.55), x = new Float32Array(n);
   let pk = 0; for (const v of th) pk = Math.max(pk, Math.abs(v));
+  let p1 = 0, p2 = 0, p3 = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const drop = 0.62 + 0.38 * Math.exp(-t / 0.018);            // the knock's pitch falls quickly: "bo-nk"
+    p1 += (f0 * drop) / SR; p2 += (f0 * 2.76 * drop) / SR;      // hollow-body modes (wood block ratio)
+    const knock = Math.sin(2 * Math.PI * p1) * env(t, 0.004, 0.06) + 0.35 * Math.sin(2 * Math.PI * p2) * env(t, 0.003, 0.025);
+    const tb = t - 0.05;                                         // the boing starts right after the knock
+    let spring = 0;
+    if (tb > 0) {
+      const fb = boing * (1 - 0.35 * Math.min(1, tb / 0.35)) * (1 + 0.06 * Math.sin(2 * Math.PI * 24 * tb));
+      p3 += fb / SR; spring = Math.sin(2 * Math.PI * p3) * env(tb, 0.01, 0.12) * 0.32;
+    }
+    x[i] = 0.9 * knock + spring + mix * ((th[i] || 0) / (pk || 1));
+  }
+  return x;
+}
+
+/**
+ * «!идея бум»: a big but SOFT cartoon boom — a round sub thump falling 95 → 34 Hz, a warm low-passed rumble that
+ * rolls off over ~1.6 s (its filter closing), and a muffled "pomf" body at the onset. 8 ms attack, no crackle.
+ */
+function boom(dur) {
+  const n = len(dur), x = new Float32Array(n), f = svf(), g = svf(), h = svf();
   let ph = 0;
   for (let i = 0; i < n; i++) {
-    const t = i / SR, fr = f0 * (0.55 + 0.45 * Math.exp(-t / 0.05));
+    const t = i / SR;
+    const fr = 34 + 61 * Math.exp(-t / 0.12);
     ph += fr / SR;
-    x[i] = (th[i] || 0) / (pk || 1) + Math.sin(2 * Math.PI * ph) * env(t, 0.005, 0.07) * mix;
+    const thump = Math.sin(2 * Math.PI * ph) * env(t, 0.008, 0.38);
+    const rum = f(rnd(), 120 + 900 * Math.exp(-t / 0.25), 0.8).lp * env(t, 0.02, 0.55) * 1.4;
+    const body = g(rnd(), 380 + 500 * Math.exp(-t / 0.05), 1.1).bp * env(t, 0.006, 0.09) * 1.6;
+    x[i] = h(thump * 1.1 + rum + body, 2400, 0.7).lp;
+  }
+  return x;
+}
+/** The fuse: a soft sizzle (band-passed hiss) with sparse little crackles, swelling for 0.6 s then cut short. */
+function fuse(dur) {
+  const n = len(dur), x = new Float32Array(n), f = svf(), c = svf();
+  let crack = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR, u = t / dur;
+    if (rnd() > 0.9993) crack = 1;
+    crack *= 0.995;
+    const hiss = f(rnd(), 2600 + 900 * u, 1.4).bp * (0.35 + 0.65 * u);
+    const cr = c(rnd() * crack, 1800, 2).bp * 1.5;
+    const a = Math.min(1, t / 0.03) * (u > 0.93 ? Math.max(0, 1 - (u - 0.93) / 0.07) : 1);
+    x[i] = (hiss + cr) * a;
   }
   return x;
 }
@@ -134,4 +180,6 @@ wav('gen_shimmer_0', shimmer(0.75, [1047, 1319, 1568, 2093, 2637], 0.045));
 wav('gen_shimmer_1', shimmer(0.75, [1175, 1480, 1760, 2349, 2960], 0.04));
 wav('gen_chime_0', chime(1.2, 784));
 wav('gen_groan_0', groan(0.85, 230, 165)); wav('gen_groan_1', groan(0.95, 205, 150));
-[0, 1, 2].forEach((i) => wav(`gen_bonk_${i}`, bonk(`${K}impactSoft_heavy_00${i}.ogg`, 560 + i * 60, 0.32)));
+[[420, 0.22, 330], [470, 0.2, 370], [380, 0.24, 300]].forEach(([f, m, bo], i) => wav(`gen_bonk_${i}`, bonk(`${K}impactSoft_heavy_00${i}.ogg`, f, m, bo)));
+wav('gen_boom_0', boom(1.9));
+wav('gen_fuse_0', fuse(0.62));

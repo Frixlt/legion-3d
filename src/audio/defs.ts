@@ -51,7 +51,8 @@ export const SFX = {
   'amb.creak': { files: v('creak', 3), bus: 'amb', db: -10, gainVar: 0.08, rateVar: 0.06, cooldown: 8, ref: 3, maxDist: 30, lp: 3000 },
   // «Драки с котиками» (src/combat): soft and comic, never violent; positional, quieter than the hits of the mine
   'combat.swing': { files: v('whoosh', 3), bus: 'sfx', db: -15, gainVar: 0.08, rateVar: 0.06, cooldown: 0.1, ref: 2, maxDist: 14 },
-  'combat.hit': { files: v('bonk', 3), bus: 'sfx', db: -11, gainVar: 0.06, rateVar: 0.06, cooldown: 0.06, ref: 2.5, maxDist: 20, lp: 4500 },
+  'combat.hit': { files: ['bonk_0'],   // the owner picked variant 1 of the cartoon bonk
+    bus: 'sfx', db: -11, gainVar: 0.06, rateVar: 0.06, cooldown: 0.06, ref: 2.5, maxDist: 20, lp: 4500 },
   'combat.bow.draw': { files: ['creak_2'], bus: 'sfx', db: -20, gainVar: 0.05, rateVar: 0.05, rate: 1.35, cooldown: 0.2, ref: 2, maxDist: 10, lp: 3500 },
   'combat.bow.release': { files: v('twang', 2), bus: 'sfx', db: -13, gainVar: 0.05, rateVar: 0.05, rate: 0.8, cooldown: 0.08, ref: 2, maxDist: 14, lp: 4000 },
   'combat.arrow.hit': { files: v('land', 3), bus: 'sfx', db: -11, gainVar: 0.05, rateVar: 0.06, rate: 1.2, cooldown: 0.06, ref: 2.5, maxDist: 22, lp: 4000 },
@@ -60,6 +61,21 @@ export const SFX = {
   'combat.summon': { files: v('groan', 2), bus: 'sfx', db: -14, gainVar: 0.06, rateVar: 0.06, cooldown: 0.5, ref: 2.5, maxDist: 18, lp: 3000 },
   'combat.poof': { files: v('poof', 2), bus: 'sfx', db: -14, gainVar: 0.06, rateVar: 0.06, cooldown: 0.08, ref: 2.5, maxDist: 18 },
   'combat.holy': { files: ['chime_0'], bus: 'sfx', db: -14, gainVar: 0.04, rateVar: 0.04, cooldown: 0.4, ref: 3, maxDist: 22 },
+  // «Забавы» (src/features/bench, cheer, cheers-fx): existing recordings only
+  'social.sit': { files: v('cloth', 4), bus: 'sfx', db: -17, gainVar: 0.05, rateVar: 0.05, rate: 0.85, cooldown: 0.4, ref: 1.5, maxDist: 10, lp: 3500 },
+  'social.cheer': { files: v('tick', 3), bus: 'sfx', db: -19, gainVar: 0.06, rateVar: 0.06, rate: 0.7, cooldown: 1.5, ref: 2.5, maxDist: 16, lp: 3200 },
+  'social.chime': { files: ['chime_0'], bus: 'ui', db: -17, gainVar: 0.03, rateVar: 0.02, rate: 1.12, cooldown: 2 },
+  // flight, the emote wheel, «!идея бум» (src/features/flight, emotes, boom): boom_0 / fuse_0 are synthesised
+  // (gen-combat-sfx.mjs), the rest reuse the bank
+  'fly.up': { files: v('whoosh', 3), bus: 'sfx', db: -16, gainVar: 0.05, rateVar: 0.05, rate: 0.72, cooldown: 0.4, lp: 3500 },
+  'emote.pop': { files: ['@pop'], bus: 'voice', db: -13, gainVar: 0.05, rateVar: 0.05, rate: 1.1, cooldown: 0.3 },
+  'emote.dance': { files: v('shimmer', 2), bus: 'sfx', db: -17, gainVar: 0.05, rateVar: 0.04, rate: 1.15, cooldown: 0.5 },
+  'emote.laugh': { files: ['meow_0'], bus: 'voice', db: -13, gainVar: 0.05, rateVar: 0.04, rate: 1.3, cooldown: 0.5, lp: 4000 },
+  'emote.purr': { files: ['meow_1'], bus: 'voice', db: -12, gainVar: 0.05, rateVar: 0.03, rate: 0.95, cooldown: 0.5, lp: 3500 },
+  'emote.sad': { files: ['meow_0'], bus: 'voice', db: -14, gainVar: 0.05, rateVar: 0.03, rate: 0.78, cooldown: 0.5, lp: 3000 },
+  'emote.huff': { files: v('poof', 2), bus: 'sfx', db: -14, gainVar: 0.05, rateVar: 0.05, rate: 1.35, cooldown: 0.3 },
+  'fun.fuse': { files: ['fuse_0'], bus: 'sfx', db: -16, gainVar: 0.03, rateVar: 0.02, cooldown: 1 },
+  'fun.boom': { files: ['boom_0'], bus: 'sfx', db: -7, gainVar: 0.03, rateVar: 0.03, cooldown: 2, lp: 5000 },
   'amb.meow': { files: v('meow', 2), bus: 'amb', db: -10, gainVar: 0.08, rateVar: 0.04, cooldown: 40, ref: 3, maxDist: 40, lp: 2600 },
 } satisfies Record<string, SfxDef>;
 

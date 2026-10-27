@@ -21,6 +21,12 @@
  *    retaining wall) → passable only while the feet are above its ground by more than STEP (jumping across it, or
  *    walking off an edge into a drop), for at most VOID_RUN metres in a row (no jumping out of the map).
  * Without space.solidTop the old behaviour holds exactly: free() = false is a wall.
+ *
+ * Flight (setFlight(h), mage levitation, src/flight): gravity and jumps are off and the feet glide to h metres above
+ * the support under the body. Height is visual only — horizontally a point is passable only if free() is true and
+ * nothing unjumpable (solidTop = Infinity) is there, so x/y (what the city sends to the site) never leave the walk
+ * grid; grid gaps and grid-blocked tops are walls while flying. setFlight(null) drops back to normal physics (a short
+ * fall, onLand fires); setSpace / teleport end a flight.
  */
 import type { CityLayout, Unsub } from '../contracts';
 import type { Input, PlayerController } from '../contracts/modules';
@@ -104,6 +110,10 @@ export interface PlayerControllerEx extends PlayerController {
   onJump(fn: (vy: number) => void): Unsub;
   /** Called on touching down: impact speed (m/s, ≥ 0) and fall height from the apex (m). */
   onLand(fn: (impact: number, fall: number) => void): Unsub;
+  /** Flight: hover `h` m above the support (null = normal physics again). See the header. */
+  setFlight(h: number | null): void;
+  /** True while setFlight(h) is active. */
+  readonly flying: boolean;
 }
 
 const WAYPOINT_EPS = 0.12;   // m
@@ -111,6 +121,9 @@ const SUBSTEP_M = 0.06;      // m per collision sub-step (grid cells are 16 px =
 const VOID_RUN = 2.5;        // m: max distance from the last walkable point while over walk-grid gaps (nothing solid)
 const SLOPE_SNAP = 1.2;      // m of drop per m moved still followed as "walking down" (stairs) instead of falling
 const AIR_STEP = 0.1;        // m: step-up margin while airborne (catch a top edge, no visible pop)
+const FLY_MULT = 1.3;        // horizontal speed while flying (× walk / run)
+const FLY_ACC = 0.55;        // fraction of the ground acceleration while flying (a glide)
+const FLY_RISE = 3.2;        // 1/s: how fast the feet approach the flight height
 
 export function createPlayerController(
   layout: CityLayout | WalkSpace,
@@ -178,6 +191,7 @@ export function createPlayerController(
   let prevJumpHeld = false;
   let reach = STEP;                  // current step-up margin (STEP grounded, AIR_STEP airborne)
   let voidWalk = false;              // grounded inside a grid gap: walking on within it is allowed
+  let flyH: number | null = null;    // flight height above the support (m) or null
   // auto-walk
   let path: [number, number][] | null = null;
   let wp = 0;
@@ -194,6 +208,7 @@ export function createPlayerController(
     lastVoid = false;
     const top = hasTop ? fTop(px, py) : (fFree(px, py) ? -Infinity : Infinity);
     if (top === Infinity) return NaN;
+    if (flyH !== null && hasTop && !fFree(px, py)) return NaN;   // flying: x/y stay on the walk grid
     const g = fGround(px, py);
     if (top > -Infinity) {
       if (top > hi + reach) return NaN;
@@ -270,6 +285,7 @@ export function createPlayerController(
   function anchorDist(px: number, py: number): number { return Math.hypot((px - anchorX) * kx, (py - anchorY) * kz); }
   /** Grid gaps are allowed within VOID_RUN of the last walkable point, or when heading back towards it. */
   function voidAllowed(px: number, py: number, dHere: number): boolean {
+    if (flyH !== null) return false;
     const d = anchorDist(px, py);
     return d <= VOID_RUN || d < dHere;
   }
@@ -289,6 +305,7 @@ export function createPlayerController(
     // on teleport we stand on the ground (not on top of a crate we were placed into)
     ground = supportUnder(x, y, fGround(x, y));
     fy = ground; vy = 0; air = false; jumped = false; sinceGround = 0; anchorX = x; anchorY = y; apex = fy;
+    flyH = null;
   }
 
   const ctl: PlayerControllerEx = {
@@ -305,6 +322,18 @@ export function createPlayerController(
     get walking() { return path !== null; },
     get space() { return space; },
     get units() { return units; },
+    get flying() { return flyH !== null; },
+
+    setFlight(h) {
+      if (h === null || !(h >= 0)) {
+        if (flyH === null) return;
+        // back to physics: a (short) fall from where we are; landing fires onLand as usual
+        flyH = null; air = true; jumped = true; vy = 0; apex = fy; sinceGround = 0; bufferT = 0;
+        return;
+      }
+      if (flyH === null) { clearPath(); air = true; jumped = true; vy = 0; bufferT = 0; }
+      flyH = h;
+    },
 
     teleport(nx, ny) {
       x = nx; y = ny; vx = 0; vz = 0; speed = 0; clearPath();
@@ -348,7 +377,7 @@ export function createPlayerController(
       let pressed = false;
       if (inp && typeof inp.consumeJump === 'function') pressed = inp.consumeJump();
       else { const held = !!inp?.jump; pressed = held && !prevJumpHeld; prevJumpHeld = held; }
-      if (pressed) bufferT = BUFFER;
+      if (pressed && flyH === null) bufferT = BUFFER;
 
       let tx = 0, tz = 0;   // target velocity m/s
       if (mx !== 0 || my !== 0) {
@@ -359,7 +388,7 @@ export function createPlayerController(
         let dZ = -c * my - s * mx;
         const l = Math.hypot(dX, dZ);
         if (l > 1) { dX /= l; dZ /= l; }
-        const sp = inp!.run ? RUN : WALK;
+        const sp = (inp!.run ? RUN : WALK) * (flyH !== null ? FLY_MULT : 1);
         tx = dX * sp; tz = dZ * sp;
       } else if (path) {
         // auto-walk along the path
@@ -379,19 +408,26 @@ export function createPlayerController(
       }
 
       // ---- take-off (grounded, or within coyote time after walking off an edge)
+      if (flyH !== null) bufferT = 0;
       if (bufferT > 0 && (!air || (!jumped && sinceGround <= COYOTE))) doJump();
       if (bufferT > 0) bufferT = Math.max(0, bufferT - dt);
 
       // ---- horizontal velocity (reduced control in the air)
       const moving = tx !== 0 || tz !== 0;
-      const k = (moving ? ACC : DEC) * (air ? AIR : 1);
+      const k = (moving ? ACC : DEC) * (flyH !== null ? FLY_ACC : air ? AIR : 1);
       vx = damp(vx, tx, k, dt);
       vz = damp(vz, tz, k, dt);
       if (!moving && !air && vx * vx + vz * vz < 1e-4) { vx = 0; vz = 0; }
 
       // ---- vertical (exact parabola per frame)
       const fy0 = fy;
-      if (air) {
+      if (flyH !== null) {
+        // glide towards the flight height over what is under us (never below it)
+        const sup = supportUnder(x, y, fy), want = sup + flyH;
+        fy += (want - fy) * (1 - Math.exp(-FLY_RISE * dt));
+        if (fy < sup) fy = sup;
+        vy = (fy - fy0) / dt; apex = fy; air = true; sinceGround = 0;
+      } else if (air) {
         fy += vy * dt - 0.5 * G * dt * dt;
         vy -= G * dt;
         if (fy > apex) apex = fy;
@@ -419,7 +455,9 @@ export function createPlayerController(
 
       // ---- support, landing, walking off edges
       ground = supportUnder(x, y, hi);
-      if (air) {
+      if (flyH !== null) {
+        if (fy < ground) fy = ground;
+      } else if (air) {
         if (fy <= ground && vy <= 0) { fy = ground; land(); }
         else if (fy < ground) fy = ground;   // rising past a step edge: never inside a top
       } else if (ground > fy) {

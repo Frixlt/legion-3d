@@ -421,6 +421,7 @@ button { font: inherit; color: inherit; }
 .p-set .pan, .p-help .pan { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(720px, 90%); max-height: 86%; }
 .setrow { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 7px 4px; border-bottom: 1px solid #ffffff0d; font: 700 14px/1.2 var(--l3d-tx); }
 .setrow small { display: block; color: var(--l3d-mute); font-weight: 600; font-size: 11.5px; margin-top: 3px; }
+.setinfo { padding: 6px 4px 8px; font: 600 12px/1.45 var(--l3d-tx); color: var(--l3d-mute); border-bottom: 1px solid #ffffff0d; white-space: pre-line; }
 .setgroup { margin: 14px 4px 2px; font: 800 11px/1 var(--l3d-tx); letter-spacing: .12em; text-transform: uppercase; color: var(--l3d-gold, #f4c25b); }
 .seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #00000040; box-shadow: inset 0 0 0 1px #ffffff12; }
 .seg button { border: 0; background: transparent; cursor: pointer; height: 30px; padding: 0 13px; border-radius: 999px; font: 700 12.5px/1 var(--l3d-tx); color: var(--l3d-mute); }
@@ -540,6 +541,19 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px;
 /* ============================================================= feature tabs (ui.addTab) */
 .p-custom .pan { left: 50%; transform: translateX(-50%); width: min(980px, 88%); top: 18px; bottom: 6px; }
 .p-custom.p-side .pan { left: auto; right: 26px; transform: none; width: min(640px, calc(56% - 52px)); }
+/* Locally starred map pins and quick list; selection remains a separate manual action. */
+.mpin.favorite .ic { box-shadow:0 0 0 2px #ffcf6a,0 0 0 5px #1d1620; }
+.mpin.favorite .ic::after { content:'★'; position:absolute;right:-9px;top:-12px;color:#ffcf6a;font-size:15px;text-shadow:0 2px 3px #000; }
+.mfavs { position:absolute;left:12px;top:12px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:5px;max-width:min(420px,65%);pointer-events:auto; }
+.mfavs b,.mfavs button { border-radius:16px;background:#211927e8;color:#ffe2a0;border:1px solid #ffcf6a66;padding:5px 9px;font:700 11px var(--l3d-tx); }
+.mfavs button { cursor:pointer; }
+.gear-medals { position:absolute;inset:0;pointer-events:none; }
+.gear-medals span { position:absolute;left:50%;top:26%;font-size:22px;animation:medal-float 4s ease-in-out infinite alternate;animation-delay:calc(var(--i) * -0.8s);filter:drop-shadow(0 2px 3px #000a); }
+.gear-medals small {position:absolute;top:3px;left:50%;transform:translateX(-50%);white-space:nowrap;color:var(--l3d-mute);font-size:11px;}
+@keyframes medal-float { to {transform:translateY(-8px) rotate(5deg);} }
+@media(prefers-reduced-motion:reduce){.gear-medals span{animation:none;}}
+.milestones {margin:10px 0;padding:8px 12px;border-left:2px solid var(--l3d-gold);background:#ffd48b0b;}
+.milestones p {margin:6px 0;color:var(--l3d-ink);font-size:12px;}
 `;
 
 /**

@@ -31,11 +31,13 @@ export function parseMode(v: unknown): EventMode {
 
 /**
  * Which event runs now? `forced` (dev override ?event=<id>) wins over the mode. 'off' → none. 'auto' → the event whose
- * window is open (the first registered if several). 'on' → the open one, else the nearest window.
+ * window is open (the first registered if several). 'on' → `prefer` (the «Какое событие» setting) when it names a
+ * registered event, else the open one, else the nearest window.
  */
-export function pickEvent(list: readonly SeasonalEvent[], date: Date, mode: EventMode, forced?: string | null): SeasonalEvent | null {
+export function pickEvent(list: readonly SeasonalEvent[], date: Date, mode: EventMode, forced?: string | null, prefer?: string | null): SeasonalEvent | null {
   if (forced) return list.find((e) => e.id === forced) ?? null;
   if (mode === 'off' || !list.length) return null;
+  if (mode === 'on' && prefer) { const p = list.find((e) => e.id === prefer); if (p) return p; }
   const open = list.find((e) => e.active(date));
   if (open) return open;
   if (mode !== 'on') return null;

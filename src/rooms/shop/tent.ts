@@ -126,6 +126,7 @@ export function buildTent(R: RoomBase, st: TentStock | null): void {
       R.root.add(av.root);
       mannequins.push({ av, ph: i * 1.7, base: look, x: cx, z: cz, lod: 1 });
       R.figures.push({ name: 'манекен ' + (b.title || b.key), x: cx, z: cz, face: look });
+      R.combatFigure(av, cx, 0.12, cz, b.key);   // «Драки с котиками»: it can be knocked off its stand (src/combat/room.ts)
     } catch (e) { console.warn('[l3d rooms] mannequin', b.key, e); }
     const hit = hitBox(cx, 1.2, cz, 1.2, 2.4, 1.2, 'room:hit:booth:' + b.key);
     R.interact({

@@ -17,6 +17,23 @@ export const faceKeyStr = (f: FaceKey) => `${f.eyes}|${f.mouth}|${+f.blush}|${f.
 
 const texCache = new Map<string, THREE.CanvasTexture>();
 
+/** Short-lived chat moods (src/social/mood.ts) → the eyes / mouth they draw; blush is forced on for warm moods. */
+export type Mood = 'happy' | 'laugh' | 'surprised' | 'sad' | 'love' | 'angry' | 'puzzled';
+export const MOOD_FACE: Record<Mood, { eyes: string; mouth: string; blush?: boolean }> = {
+  happy: { eyes: 'happy', mouth: 'smile', blush: true },
+  laugh: { eyes: 'laugh', mouth: 'laugh', blush: true },
+  surprised: { eyes: 'surprised', mouth: 'o' },
+  sad: { eyes: 'sad', mouth: 'frown' },
+  love: { eyes: 'love', mouth: 'smile', blush: true },
+  angry: { eyes: 'angry', mouth: 'frown' },
+  puzzled: { eyes: 'puzzled', mouth: 'o' },
+};
+/** The face key with a mood applied (eyes / mouth / blush replaced). */
+export function moodFace(f: FaceKey, mood: Mood | null | undefined): FaceKey {
+  const m = mood ? MOOD_FACE[mood] : undefined;
+  return m ? { ...f, eyes: m.eyes, mouth: m.mouth, blush: f.blush || !!m.blush } : f;
+}
+
 export function faceTexture(f: FaceKey): THREE.CanvasTexture {
   const key = faceKeyStr(f);
   let t = texCache.get(key);
@@ -99,6 +116,57 @@ function drawFace(g: CanvasRenderingContext2D, f: FaceKey) {
         g.stroke();
       }
       break;
+    case 'laugh':   // squeezed shut: > <
+      g.strokeStyle = ink; g.lineWidth = 2.6 * u;
+      for (const [i, x] of xs.entries()) {
+        const d = i === 0 ? 1 : -1;
+        g.beginPath(); g.moveTo(x - d * 5 * u, ey - 4.5 * u); g.lineTo(x + d * 4 * u, ey); g.lineTo(x - d * 5 * u, ey + 4.5 * u); g.stroke();
+      }
+      break;
+    case 'surprised':   // round white eyes, tiny pupils, raised brows
+      for (const x of xs) {
+        g.fillStyle = '#fff'; g.strokeStyle = ink; g.lineWidth = 2 * u;
+        g.beginPath(); g.arc(x, ey, 6.4 * u, 0, Math.PI * 2); g.fill(); g.stroke();
+        g.fillStyle = ink; g.beginPath(); g.arc(x, ey + 0.5 * u, 2.2 * u, 0, Math.PI * 2); g.fill();
+        g.lineWidth = 1.8 * u; g.beginPath(); g.arc(x, ey - 6 * u, 6 * u, Math.PI * 1.2, Math.PI * 1.8); g.stroke();
+      }
+      break;
+    case 'puzzled':   // one eye squints, one brow up
+      eyeIris(xs[0], ey, 6 * u);
+      g.strokeStyle = ink; g.lineWidth = 2.6 * u;
+      g.beginPath(); g.moveTo(xs[1] - 5 * u, ey); g.lineTo(xs[1] + 5 * u, ey); g.stroke();
+      g.lineWidth = 1.8 * u; g.beginPath(); g.moveTo(xs[0] - 5 * u, ey - 10 * u); g.lineTo(xs[0] + 5 * u, ey - 12.5 * u); g.stroke();
+      break;
+    case 'sad':   // droopy eyes, slanted brows, a tear
+      for (const [i, x] of xs.entries()) {
+        const d = i === 0 ? 1 : -1;
+        eyeIris(x, ey + 1 * u, 5.4 * u);
+        g.strokeStyle = ink; g.lineWidth = 1.8 * u;
+        g.beginPath(); g.moveTo(x - d * 5.5 * u, ey - 6 * u); g.lineTo(x + d * 4 * u, ey - 9.5 * u); g.stroke();
+      }
+      g.fillStyle = '#7fc8ff'; g.strokeStyle = ink; g.lineWidth = 1 * u;
+      g.beginPath(); g.moveTo(xs[0] - 3 * u, ey + 6 * u); g.quadraticCurveTo(xs[0] - 6.5 * u, ey + 12 * u, xs[0] - 3 * u, ey + 12.5 * u);
+      g.quadraticCurveTo(xs[0] + 0.5 * u, ey + 12 * u, xs[0] - 3 * u, ey + 6 * u); g.fill(); g.stroke();
+      break;
+    case 'love':   // heart eyes
+      for (const x of xs) {
+        const r = 5.6 * u;
+        g.fillStyle = '#ff4f7b'; g.strokeStyle = ink; g.lineWidth = 1.6 * u;
+        g.beginPath(); g.moveTo(x, ey + r * 0.95);
+        g.bezierCurveTo(x - r * 1.5, ey - r * 0.1, x - r * 0.75, ey - r * 1.25, x, ey - r * 0.45);
+        g.bezierCurveTo(x + r * 0.75, ey - r * 1.25, x + r * 1.5, ey - r * 0.1, x, ey + r * 0.95);
+        g.fill(); g.stroke();
+        g.fillStyle = '#fff'; g.beginPath(); g.arc(x - r * 0.45, ey - r * 0.35, r * 0.2, 0, Math.PI * 2); g.fill();
+      }
+      break;
+    case 'angry':   // frowning brows over narrowed eyes
+      for (const [i, x] of xs.entries()) {
+        const d = i === 0 ? 1 : -1;
+        g.fillStyle = ink; g.beginPath(); g.ellipse(x, ey + 1 * u, 3.8 * u, 3.2 * u, 0, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = ink; g.lineWidth = 2.4 * u;
+        g.beginPath(); g.moveTo(x - d * 6 * u, ey - 7.5 * u); g.lineTo(x + d * 4.5 * u, ey - 3.5 * u); g.stroke();
+      }
+      break;
     case 'void':
       g.fillStyle = '#120c18'; for (const x of xs) { g.beginPath(); g.ellipse(x, ey, 5.5 * u, 6.5 * u, 0, 0, Math.PI * 2); g.fill(); }
       break;
@@ -149,6 +217,26 @@ function drawFace(g: CanvasRenderingContext2D, f: FaceKey) {
       for (let i = 1; i <= 8; i++) g.lineTo(cx - 8 * u + i * 2 * u, my + 2 * u + (i % 2 ? -1.6 : 1.6) * u);
       g.stroke();
       break;
+    case 'smile':   // a happy omega, a bit wider
+      omega(8.5 * u);
+      break;
+    case 'o':   // small round «o»
+      g.fillStyle = '#7a2b3a'; g.lineWidth = 2 * u;
+      if (cat || monkey) { g.beginPath(); g.moveTo(cx, my - 2 * u); g.lineTo(cx, my); g.stroke(); }
+      g.beginPath(); g.ellipse(cx, my + 4 * u, 3.4 * u, 4.2 * u, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+      break;
+    case 'frown':
+      if (cat || monkey) { g.beginPath(); g.moveTo(cx, my - 2 * u); g.lineTo(cx, my + 1 * u); g.stroke(); }
+      g.beginPath(); g.moveTo(cx - 7 * u, my + 6 * u); g.quadraticCurveTo(cx, my - 0.5 * u, cx + 7 * u, my + 6 * u); g.stroke();
+      break;
+    case 'laugh': {   // wide open «D» with a tongue
+      if (cat || monkey) { g.beginPath(); g.moveTo(cx, my - 2 * u); g.lineTo(cx, my); g.stroke(); }
+      g.fillStyle = '#7a2b3a'; g.lineWidth = 2 * u;
+      g.beginPath(); g.moveTo(cx - 9 * u, my - 0.5 * u); g.lineTo(cx + 9 * u, my - 0.5 * u); g.quadraticCurveTo(cx + 8 * u, my + 12 * u, cx, my + 12 * u);
+      g.quadraticCurveTo(cx - 8 * u, my + 12 * u, cx - 9 * u, my - 0.5 * u); g.fill(); g.stroke();
+      g.fillStyle = '#ff8fa3'; g.beginPath(); g.ellipse(cx, my + 8.5 * u, 4.5 * u, 2.4 * u, 0, 0, Math.PI * 2); g.fill();
+      break;
+    }
     case 'none': break;
     default: {   // open
       if (cat || monkey) { g.beginPath(); g.moveTo(cx, my - 2 * u); g.lineTo(cx, my); g.stroke(); }

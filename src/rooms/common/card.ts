@@ -194,6 +194,8 @@ export class BuyCard {
         <p class="note amber">«${esc(v.t === 'good' ? v.it.name : v.s.name)}» — купить можно на стриме. ${esc(of.note)}</p>${of.why ? `<div class="rm-why">${esc(of.why)}</div>` : ''}`;
       acts = `<button type="button" class="btn ghost" data-close data-primary>Понятно</button>`;
     }
+    const fullBag = v.t === 'good' && h?.sg && typeof h.sg === 'object' && Number((h.sg as { used?: number }).used) === Number((h.sg as { cap?: number }).cap);
+    if (fullBag) price += '<p class="note">В сумке нет места.</p>';
     const hint = `<div class="rm-hint"><kbd>Enter</kbd> ${ask ? 'да' : 'выбрать'} · <kbd>Esc</kbd> ${ask ? 'назад' : 'закрыть'}</div>`;
     this.box.innerHTML = `<div class="rm-card" role="dialog" aria-modal="true" aria-label="Покупка" style="--rc:${rc}"><button type="button" class="rm-x" aria-label="Закрыть" data-close>×</button>${body}${price}<div class="rm-acts">${acts}</div>${hint}</div>`;
     this.bind();

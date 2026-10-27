@@ -16,7 +16,7 @@ export { SFX, BED, type SfxId } from './defs';
 export * from './mix';
 export { loudness } from './dsp';
 
-export interface SfxEventDetail { id: string; x?: number; y?: number; z?: number; gain?: number }
+export interface SfxEventDetail { id: string; x?: number; y?: number; z?: number; gain?: number; rate?: number; follow?: () => [number, number, number] | null }
 
 /** Fire-and-forget: ask the sound feature to play `id` (optionally at a world position, metres). */
 export function sfx(id: string, pos?: { x: number; y: number; z: number }, gain?: number): void {

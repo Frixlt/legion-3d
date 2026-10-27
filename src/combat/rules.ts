@@ -90,8 +90,12 @@ export interface GateInput {
   /** The crosshair is on an interactable (doors, goods, stones keep LMB). */
   aimed: boolean;
 }
-/** Rooms where attacks are allowed (the street is always allowed). Shops and hybrid interiors are not: be polite. */
-export const COMBAT_ROOMS = new Set(['mine3d']);
+/**
+ * Rooms where attacks are allowed (the street is always allowed): the 3D shops (forge, «Лавка», magic, tent) and the
+ * mine — pointer-locked rooms with a crosshair, where goods / stones / doors under the crosshair still win LMB.
+ * Hybrid interiors are not: they run in scene mode (free cursor, the site's panel docked, LMB picks under the cursor).
+ */
+export const COMBAT_ROOMS = new Set(['shop3d', 'mine3d']);
 
 /** Why LMB is NOT an attack right now, or null when it is. */
 export function gate(g: GateInput): string | null {

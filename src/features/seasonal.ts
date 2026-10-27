@@ -8,7 +8,9 @@
 import * as THREE from 'three';
 import { registerSettingRow, settingValue } from '../ui/settings-ext';
 import { fromX, fromZ } from '../world/coords';
-import { EVENTS, EVENT_SETTING, pickEvent, parseMode, type SeasonalEvent, type EventContext } from '../events';
+import { EVENTS, EVENT_SETTING, EVENT_PICK_SETTING, pickEvent, parseMode, type SeasonalEvent, type EventContext, type EventGame, type EventAvatar } from '../events';
+import { isTyping, type InputEx } from '../engine/input';
+import type { CoreContext } from '../core/context';
 import { coreFeature } from './types';
 
 declare const __DEV__: boolean;
@@ -22,21 +24,56 @@ export function forcedEvent(search: string = typeof location !== 'undefined' ? l
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 
+/** The game services an interactive event may use (keys, gating, the crowd's avatars, combat knock-back). */
+function eventGame(ctx: CoreContext): { game: EventGame; dispose(): void } {
+  const { input, interact, rooms } = ctx;
+  let photo = false;
+  const onPhoto = (e: Event) => { photo = !!(e as CustomEvent).detail?.on; };
+  window.addEventListener('l3d:photo', onPhoto);
+  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  type Combat = { hit(id: string, av: unknown, vx: number, vy: number, vz: number, px: number, py: number, pz: number, stop?: number, falloff?: number, spin?: number): boolean };
+  const game: EventGame = {
+    key: (id, code, label, run) => ctx.registries.keys.register(id, { code, label, when: 'gameplay', run: () => run() }),
+    canAct: () => input.locked && ctx.gameplay() && input.gameplay && !ctx.state.menu && !ctx.state.inRoom && !photo && !isTyping()
+      && ((input as InputEx).modals?.length ?? 0) === 0 && !rooms.stage && !rooms.busy && !interact.aimed,
+    forEachCat(fn) {
+      if (ctx.state.inRoom) return;
+      const m = ctx.dev.avatars as Map<string, { av: EventAvatar }> | undefined;
+      if (m) for (const [id, a] of m) fn(id, a.av);
+    },
+    me: () => (ctx.meAv ? { av: ctx.meAv as unknown as EventAvatar, visible: !ctx.state.inRoom && ctx.rig.distance >= 0.9 } : null),
+    knock(id, av, vx, vy, vz, px, py, pz) {
+      if (settingValue('l3d.combat', 'on') !== 'on') return false;
+      const c = ctx.dev.combat as Combat | undefined;
+      try { return !!c?.hit(id, av, vx, vy, vz, px, py, pz, 0.03, 0.5, 0.6); } catch { return false; }
+    },
+    swing: () => { ctx.vm.swing(); ctx.meAv.play('swing'); },
+    reducedMotion: reduced,
+  };
+  return { game, dispose: () => window.removeEventListener('l3d:photo', onPhoto) };
+}
+
 export default coreFeature({
   id: 'seasonal',
   order: 85,
   setup(ctx) {
     const offRow = registerSettingRow({
-      key: EVENT_SETTING, label: 'Праздничное оформление', sub: 'Хэллоуин: 24 октября – 3 ноября. «Авто» — только в дни праздника',
+      key: EVENT_SETTING, label: 'Праздничное оформление',
+      sub: 'Хэллоуин 24.10–3.11, Новый год 20.12–10.01, летние фонарики 21.06–7.07, шляпы 1 апреля. «Авто» — только в дни праздника',
       kind: 'seg', options: [['auto', 'Авто'], ['on', 'Всегда'], ['off', 'Выкл']], def: 'auto', group: 'События', order: 10,
     });
+    const offPick = registerSettingRow({
+      key: EVENT_PICK_SETTING, label: 'Какое событие («Всегда»)', sub: '«Ближайший» — тот, чьи дни ближе всего',
+      kind: 'seg', options: [['near', 'Ближайший'], ...EVENTS.map((e) => [e.id, e.short ?? e.title] as [string, string])], def: 'near', group: 'События', order: 11,
+    });
+    const eg = eventGame(ctx);
     const group = new THREE.Group(); group.name = 'events'; ctx.scene.add(group);
     let cur: { ev: SeasonalEvent; world: unknown; stop: () => void } | null = null;
 
     const choose = (): SeasonalEvent | null => {
       const forced = forcedEvent();
       if (forced === 'off') return null;
-      return pickEvent(EVENTS, new Date(), parseMode(settingValue(EVENT_SETTING, 'auto')), forced);
+      return pickEvent(EVENTS, new Date(), parseMode(settingValue(EVENT_SETTING, 'auto')), forced, settingValue(EVENT_PICK_SETTING, 'near'));
     };
     const stop = () => { if (!cur) return; const c = cur; cur = null; try { c.stop(); } catch (e) { console.warn('[l3d] event dispose', e); } };
     const refresh = () => {
@@ -51,7 +88,7 @@ export default coreFeature({
         onFrame: (fn) => { const u = ctx.onFrame(fn); sub.add(u); return () => { sub.delete(u); u(); }; },
         quality: () => ctx.quality(),
         onQuality: (fn) => { const u = ctx.engine.onQuality(fn); sub.add(u); return () => { sub.delete(u); u(); }; },
-        renderer: ctx.engine.renderer, camera: ctx.camera, toast: (t) => ctx.ui.toast(t),
+        renderer: ctx.engine.renderer, camera: ctx.camera, toast: (t) => ctx.ui.toast(t), game: eg.game,
       };
       try {
         const dispose = ev.setup(ec);
@@ -60,7 +97,7 @@ export default coreFeature({
         let seen: string | null = null; try { seen = localStorage.getItem(k); } catch { /* private mode */ }
         if (seen !== today && !forcedEvent() && parseMode(settingValue(EVENT_SETTING, 'auto')) === 'auto') {
           try { localStorage.setItem(k, today); } catch { /* */ }
-          ctx.ui.toast('🎃 С Хэллоуином! Город украшен — отключить можно в настройках («События»).');
+          ctx.ui.toast(ev.greeting ?? `${ev.title}: город украшен — отключить можно в настройках («События»).`);
         }
       } catch (e) {
         console.error(`[l3d] event "${ev.id}" failed`, e);
@@ -69,7 +106,7 @@ export default coreFeature({
     };
 
     refresh();
-    const onSet = (e: Event) => { const k = (e as CustomEvent).detail?.key; if (!k || k === EVENT_SETTING) refresh(); };
+    const onSet = (e: Event) => { const k = (e as CustomEvent).detail?.key; if (!k || k === EVENT_SETTING || k === EVENT_PICK_SETTING) refresh(); };
     window.addEventListener('l3d:settings', onSet);
     const offW = ctx.onWorld(() => refresh());
     let acc = 0;
@@ -78,6 +115,6 @@ export default coreFeature({
       acc += dt; if (acc > 60) { acc = 0; refresh(); }
     });
     ctx.dev.seasonal = { refresh, active: () => cur?.ev.id ?? null, group };
-    return () => { offF(); offW(); window.removeEventListener('l3d:settings', onSet); stop(); group.removeFromParent(); offRow(); };
+    return () => { offF(); offW(); window.removeEventListener('l3d:settings', onSet); stop(); group.removeFromParent(); offRow(); offPick(); eg.dispose(); };
   },
 });

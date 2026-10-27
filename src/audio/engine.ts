@@ -37,6 +37,8 @@ export interface PlayOpts {
   key?: string;
   /** Own sound: allowed even when the voice limit is reached. */
   own?: boolean;
+  /** Moving source: called every listener update; return the current position (null = stop following). */
+  follow?: () => [number, number, number] | null;
 }
 export interface EngineOpts { hrtf?: () => boolean; seed?: number; maxVoices?: number }
 export interface Volumes { master: number; amb: number; sfx: number; ui: number }
@@ -166,7 +168,22 @@ export class SoundEngine {
   }
 
   /** Listener = camera: position and forward direction (up is +Y). Call once per frame. */
+  private followers: { pan: PannerNode; fn: () => [number, number, number] | null; end: number }[] = [];
+  /** Move the panners of following voices (called from setListener, i.e. once per frame). */
+  private updateFollowers(): void {
+    if (!this.followers.length) return;
+    const now = this.now();
+    this.followers = this.followers.filter((f) => {
+      if (now > f.end) return false;
+      let p: [number, number, number] | null = null;
+      try { p = f.fn(); } catch { p = null; }
+      if (!p) return false;
+      this.setPos(f.pan, p[0], p[1], p[2]);
+      return true;
+    });
+  }
   setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number): void {
+    this.updateFollowers();
     this.lx = x; this.ly = y; this.lz = z;
     this.cap?.push({ k: 'lis', t: r4(this.now()), p: [r4(x), r4(y), r4(z), r4(fx), r4(fy), r4(fz)] });
     const L = this.ac.listener;
@@ -222,12 +239,13 @@ export class SoundEngine {
     };
     this.ends.push(at + buf.duration / v.rate);
     this.cap?.push({ k: 'voice', t: r4(at), ...v, ...(v.pos ? { pos: v.pos.map(r4) as [number, number, number] } : {}) });
-    this.voice(v, buf, at);
+    const pan = this.voice(v, buf, at);
+    if (pan && o.follow) this.followers.push({ pan, fn: o.follow, end: at + buf.duration / v.rate });
     this.played[id] = (this.played[id] || 0) + 1;
     return true;
   }
   /** Build and start one voice: source ─ [low-pass] ─ gain ─ [panner] ─ bus. */
-  private voice(v: VoiceRec, buf: AudioBuffer, at: number): void {
+  private voice(v: VoiceRec, buf: AudioBuffer, at: number): PannerNode | null {
     const ac = this.ac;
     const src = ac.createBufferSource(); src.buffer = buf;
     src.playbackRate.value = v.rate;
@@ -243,6 +261,7 @@ export class SoundEngine {
     head.connect(this.bus[v.bus]);
     src.onended = () => { src.disconnect(); lp?.disconnect(); gn.disconnect(); pan?.disconnect(); };
     src.start(at);
+    return pan;
   }
 
   /**

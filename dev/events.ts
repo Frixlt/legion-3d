@@ -4,7 +4,9 @@
  * URL options:
  *   ?event=halloween   event id (default halloween; `off` = none)        &q=0..3   quality (default 2)
  *   &cam=x,y&yaw=deg&pitch=deg   first-person camera at a px point (like dev/world.html)     &tp=1   third-person-ish
- * Keys: WASD/arrows fly (Shift = fast), Q/E down/up; mouse = orbit.   Window: __events = { start, stop, active, setQuality }
+ * Keys: WASD/arrows fly (Shift = fast), Q/E down/up; mouse = orbit; G = throw a snowball (New Year).
+ * Window: __events = { start, stop, active, setQuality }.  Events: ?event=halloween|newyear|summer|aprilfools (the party
+ * hats need the game's crowd: see them in game.html?event=aprilfools).
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -74,7 +76,10 @@ const app = document.getElementById('app')!;
   if (ev0 !== 'off') start(ev0); else render();
 
   const keys = new Set<string>();
-  addEventListener('keydown', (e) => keys.add(e.code)); addEventListener('keyup', (e) => keys.delete(e.code));
+  addEventListener('keydown', (e) => {
+    keys.add(e.code);
+    if (e.code === 'KeyG') (group.getObjectByName('event:newyear')?.userData.newyear?.snow as { throw(): boolean } | undefined)?.throw();
+  }); addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
   const fwd = new THREE.Vector3(), right = new THREE.Vector3(), mv = new THREE.Vector3();
   let last = performance.now(), t = 0, fps = 60, n = 0;

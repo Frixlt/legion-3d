@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import type { Appearance } from '../contracts';
 import type { Avatar } from '../contracts/modules';
 import { getModel, releaseModel, B, BONE_COUNT, BONE_PARENT, type ModelData } from './model';
-import { faceTexture, facePatch } from './face';
+import { faceTexture, facePatch, moodFace, MOOD_FACE, type Mood, type FaceKey } from './face';
 import { toonMat, outlineMat, faceMat, alphaLevel, ALPHA_LEVELS, uTime, auraPointsMat, glowMat, glowSolidMat, type Variant } from './materials';
 import { nickExtras, jhash } from './appearance';
 import { TP_TRACKS, TP_CONTACT, TP_VALUES, FAMILY_TRACK, trackLen, sampleTrack } from './attacks';
@@ -40,6 +40,15 @@ export interface AvatarCombat {
   arrowTip(out: THREE.Vector3): boolean;
   /** World positions of the striking edge of the held weapon (or the paw) now, for the swing trail; false = none. */
   bladeSeg(a: THREE.Vector3, b: THREE.Vector3, pivot?: THREE.Vector3): boolean;
+}
+/** Optional social hooks (src/features/mood, bench, cheer): duck-typed, not part of the Avatar contract. */
+export interface AvatarSocial {
+  /** Show a chat mood on the face for `sec` seconds (null = back to the own face now). The dizzy face wins. */
+  setMood(mood: Mood | null, sec?: number): void;
+  /** Sitting pose (legs forward, paws on the lap): 0 = standing … 1 = seated; eased inside update(). */
+  setSit(on: boolean): void;
+  /** How far below the seat top the avatar root goes when seated (m): the body's bottom rests on the seat. */
+  readonly sitDrop: number;
 }
 
 /* ------------------------------------------------------------------ aura */
@@ -81,7 +90,7 @@ let hiddenMat: THREE.MeshBasicMaterial | null = null;
 const hidden = () => (hiddenMat ||= new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
 
 /* ------------------------------------------------------------------ emotes */
-const EMOTE_LEN: Record<string, number> = { wave: 1.6, cheer: 1.4, equip: 0.8, swing: 0.45, hit: 0.35 };
+const EMOTE_LEN: Record<string, number> = { wave: 1.6, cheer: 1.4, equip: 0.8, swing: 0.45, hit: 0.35, clap: 1.3, laugh: 1.5 };
 for (const k in TP_TRACKS) EMOTE_LEN[k] = trackLen(TP_TRACKS[k]);
 let flashMatProto: THREE.MeshBasicMaterial | null = null;
 const _bm = new THREE.Matrix4(), _bt = new THREE.Vector3(), _bb = new THREE.Vector3(), _bg = new THREE.Vector3(), _bc = new THREE.Vector3(), _bd = new THREE.Vector3();
@@ -93,7 +102,7 @@ const JUMP_MAX = 2.5, LAND_LEN = 0.32;
 export let BOW_CANT = -0.5;
 export function setBowCant(v: number) { BOW_CANT = v; }
 
-class AvatarImpl implements Avatar, AvatarCombat {
+class AvatarImpl implements Avatar, AvatarCombat, AvatarSocial {
   readonly root = new THREE.Group();
   headTop = 1.35;
   private model: ModelData | null = null;
@@ -117,6 +126,8 @@ class AvatarImpl implements Avatar, AvatarCombat {
   private drawT = 0; private drawAmt = 0; private stopT = 0;
   private flash: THREE.SkinnedMesh | null = null; private flashA = 0;
   private dizzy = false;
+  private mood: Mood | null = null; private moodT = 0;
+  private sitOn = false; private sitAmt = 0;
   private bowKit: BowDraw | null = null;
   private armLRest = new THREE.Vector3(); private armRRest = new THREE.Vector3();
   /** Time since the bow was loosed (−1 = not recently). */
@@ -238,8 +249,9 @@ class AvatarImpl implements Avatar, AvatarCombat {
     if (this.face && this.model) {
       this.face.visible = vis && lod < 2 && !fp;
       const fk = this.model.faceKey.split('|');
-      const dz = this.dizzy;
-      this.face.material = faceMat(faceTexture({ eyes: dz ? 'dizzy' : fk[0], mouth: dz ? 'wobble' : fk[1], blush: fk[2] === '1', iris: +fk[3], style: fk[4], narrow: fk[5] === '1', ghost: fk[6] === '1' }), this.model.faceKey + (dz ? '|dizzy' : ''), v, this.lvl);
+      const dz = this.dizzy, md = dz ? null : this.mood;
+      const f: FaceKey = { eyes: dz ? 'dizzy' : fk[0], mouth: dz ? 'wobble' : fk[1], blush: fk[2] === '1', iris: +fk[3], style: fk[4], narrow: fk[5] === '1', ghost: fk[6] === '1' };
+      this.face.material = faceMat(faceTexture(moodFace(f, md)), this.model.faceKey + (dz ? '|dizzy' : md ? '|' + md : ''), v, this.lvl);
     }
     if (this.low) { this.low.visible = vis && lod === 2 && !fp; this.low.material = toonMat(v, this.lvl); }
     this.auraGroup.visible = vis && lod === 0 && !fp;
@@ -249,6 +261,9 @@ class AvatarImpl implements Avatar, AvatarCombat {
     uTime.value = t;
     const bones = this.bones;
     if (!bones.length) return;
+    if (this.moodT > 0) { this.moodT -= dt; if (this.moodT <= 0) { this.mood = null; this.applyState(); } }
+    const sitTarget = this.sitOn ? 1 : 0;
+    if (this.sitAmt !== sitTarget) this.sitAmt = Math.abs(sitTarget - this.sitAmt) < 0.01 ? sitTarget : this.sitAmt + (sitTarget - this.sitAmt) * Math.min(1, dt * 9);
     // smooth the walk amount; advance the gait phase with speed
     const target = Math.min(1.6, Math.max(0, speed01));
     this.walk += (target - this.walk) * Math.min(1, dt * 8);
@@ -302,6 +317,18 @@ class AvatarImpl implements Avatar, AvatarCombat {
       bones[B.cape2].rotation.x = -k * (0.26 * w + run * 0.32) - Math.abs(Math.sin(tt * 5.3 + 0.6)) * (0.04 + 0.07 * w) * k;
       bones[B.cape2].rotation.z = Math.sin(tt * 2.3) * 0.05;
     }
+    // sitting: legs forward over the seat edge, paws on the lap, a slow tail swing and a little lean back
+    if (this.sitAmt > 0.001) {
+      const k = this.sitAmt, kick = Math.sin(tt * 1.3) * 0.12;
+      legL.rotation.x += (1.25 + kick - legL.rotation.x) * k; legR.rotation.x += (1.25 - kick - legR.rotation.x) * k;
+      legL.position.y += (this.restY[B.legL] - legL.position.y) * k; legR.position.y += (this.restY[B.legR] - legR.position.y) * k;
+      body.position.y += (this.restY[B.body] + breathe * 0.5 - body.position.y) * k;
+      body.rotation.x += (0.06 - body.rotation.x) * k; body.rotation.y *= 1 - k;
+      body.rotation.z += (Math.sin(tt * 0.7) * 0.03 - body.rotation.z) * k;
+      armL.rotation.set(armL.rotation.x + (0.55 - armL.rotation.x) * k, armL.rotation.y * (1 - k), armL.rotation.z + (-0.32 - armL.rotation.z) * k);
+      armR.rotation.set(armR.rotation.x + (0.55 - armR.rotation.x) * k, armR.rotation.y * (1 - k), armR.rotation.z + (0.32 - armR.rotation.z) * k);
+      if (this.model!.hasTail) { bones[B.tail1].rotation.x += -0.5 * k; bones[B.tail1].rotation.z += Math.sin(tt * 1.1) * 0.15 * k; }
+    }
     // emotes override arms
     if (this.stopT > 0) this.stopT -= dt;
     if (this.emote) {
@@ -319,6 +346,19 @@ class AvatarImpl implements Avatar, AvatarCombat {
             const hop = Math.abs(Math.sin(k * Math.PI * 3));
             armL.rotation.set(0, 0, -0.18 - env * 2.6); armR.rotation.set(0, 0, 0.18 + env * 2.6);
             body.position.y += hop * 0.1 * env;
+            break;
+          }
+          case 'clap': {   // paws in front, clapping together a few times
+            const c = Math.abs(Math.sin(this.emoteT * 13));
+            armL.rotation.set(env * 1.25, 0, -0.18 + env * (0.75 - c * 0.5)); armR.rotation.set(env * 1.25, 0, 0.18 - env * (0.75 - c * 0.5));
+            body.position.y += Math.abs(Math.sin(this.emoteT * 6.5)) * 0.025 * env;
+            break;
+          }
+          case 'laugh': {   // holding the belly, the body shakes and leans back
+            const sh = Math.sin(this.emoteT * 24) * env;
+            armL.rotation.set(env * 0.9, 0, -0.18 + env * 0.55); armR.rotation.set(env * 0.9, 0, 0.18 - env * 0.55);
+            body.rotation.x += 0.16 * env; body.rotation.z += sh * 0.05;
+            body.position.y += Math.abs(sh) * 0.02;
             break;
           }
           case 'equip':
@@ -537,6 +577,16 @@ class AvatarImpl implements Avatar, AvatarCombat {
       if (this.flash.geometry !== this.mesh!.geometry) this.flash.geometry = this.mesh!.geometry;
     }
   }
+  /* ---- social hooks (src/features/mood, bench, cheer) ---- */
+  setMood(mood: Mood | null, sec = 2): void {
+    const m = mood && mood in MOOD_FACE ? mood : null;
+    this.moodT = m ? Math.max(0.1, sec) : 0;
+    if (m === this.mood) return;
+    this.mood = m;
+    this.applyState();
+  }
+  setSit(on: boolean): void { this.sitOn = on; }
+  get sitDrop(): number { return this.model ? this.model.dims.y0 + 0.02 : 0.09; }
   setDizzy(on: boolean): void {
     if (on === this.dizzy) return;
     this.dizzy = on;

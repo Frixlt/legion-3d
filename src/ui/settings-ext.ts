@@ -8,7 +8,9 @@
 export interface SettingRowBase { key: string; label: string; sub?: string; group?: string; order?: number }
 export interface RangeRow extends SettingRowBase { kind: 'range'; min: number; max: number; step: number; def: number; fmt?: (v: number) => string }
 export interface SegRow extends SettingRowBase { kind: 'seg'; options: [string, string][]; def: string }
-export type SettingRow = RangeRow | SegRow;
+/** Read-only text row (explanations); `text` is re-evaluated on every render. */
+export interface InfoRow extends SettingRowBase { kind: 'info'; text: () => string }
+export type SettingRow = RangeRow | SegRow | InfoRow;
 
 const ROWS = new Map<string, SettingRow>();
 
@@ -24,6 +26,7 @@ export function settingRows(): SettingRow[] {
 export function settingRow(key: string): SettingRow | undefined { return ROWS.get(key); }
 
 export function readRow(r: SettingRow): number | string {
+  if (r.kind === 'info') return '';
   let raw: string | null = null;
   try { raw = localStorage.getItem(r.key); } catch { /* private mode */ }
   if (r.kind === 'range') { const v = raw == null ? NaN : parseFloat(raw); return Number.isFinite(v) ? Math.min(r.max, Math.max(r.min, v)) : r.def; }

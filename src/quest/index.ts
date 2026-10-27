@@ -108,6 +108,11 @@ canvas.word{display:block;height:32px}
 .f{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#a99fd0}
 .f button{all:unset;cursor:pointer;color:#ffe9a8;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,201,77,.35)}
 .f button:hover{background:rgba(255,201,77,.15)}
+.v3d{all:unset;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 10px;border-radius:10px;cursor:pointer;font:800 14px 'Golos Text',sans-serif;
+  color:#2a1606;background:linear-gradient(180deg,#ffe27a,#ffc94d);box-shadow:0 0 0 2px rgba(58,36,16,.5),0 4px 14px rgba(255,201,77,.35);animation:glow 1.8s ease-in-out infinite}
+.v3d.on{background:rgba(255,255,255,.1);color:#ffe9a8;box-shadow:inset 0 0 0 1px rgba(255,201,77,.45);animation:none}
+.v3d kbd{font:800 12px 'Golos Text',sans-serif;padding:1px 6px;border-radius:5px;background:rgba(42,22,6,.18)}
+@keyframes glow{50%{box-shadow:0 0 0 2px rgba(58,36,16,.5),0 4px 22px rgba(255,201,77,.75)}}
 .lock{position:fixed;left:50%;top:14px;transform:translateX(-50%);padding:8px 16px;border-radius:999px;background:rgba(18,12,40,.9);border:1px solid rgba(255,201,77,.5);
   font:600 13px 'Golos Text',sans-serif;color:#ffe9a8;pointer-events:none}
 `;
@@ -118,6 +123,10 @@ export const mountQuestHud: MountQuestHud = (root, host): QuestHud => {
   const sh = box.attachShadow({ mode: 'open' });
   sh.innerHTML = `<style>${CSS}</style><div class="q hide" role="status" aria-live="polite"><div class="h"><i></i><b></b><span></span></div><div class="b"></div></div><div class="lock" hidden>Вы в походе — следите за ним здесь</div>`;
   const el = sh.querySelector('.q') as HTMLElement, H = sh.querySelector('.h') as HTMLElement, B = sh.querySelector('.b') as HTMLElement, lock = sh.querySelector('.lock') as HTMLElement;
+  // 3D expedition view (src/features/expedition.ts): «Смотреть в 3D [Q]» while the expedition runs
+  let v3d = false, v3dOn = false;
+  const onV3d = (e: Event) => { const d = (e as CustomEvent).detail || {}; v3d = !!d.active; v3dOn = !!d.onAir; key = ''; tick(); };
+  window.addEventListener('l3d:expedition', onV3d);
   let min = false; try { min = localStorage.getItem('l3d.qmin') === '1'; } catch { /* */ }
   H.onclick = () => { min = !min; el.classList.toggle('min', min); try { localStorage.setItem('l3d.qmin', min ? '1' : '0'); } catch { /* */ } };
   el.classList.toggle('min', min);
@@ -144,6 +153,7 @@ export const mountQuestHud: MountQuestHud = (root, host): QuestHud => {
     if (!c) return;
     (H.children[0] as HTMLElement).textContent = c.icon; (H.children[1] as HTMLElement).textContent = c.title;
     let h = '';
+    if (v3dOn || v3d) h += `<button type="button" class="v3d${v3d ? ' on' : ''}" data-v3d>${v3d ? 'Выйти из 3D-похода' : '🎥 Поход идёт — смотреть в 3D'} <kbd>Q</kbd></button>`;
     if (c.where) h += `<div class="chip ${c.inParty ? 'in' : ''}">${esc(c.where)}</div>`;
     if (c.hp != null && c.hp >= 0) h += `<div class="hp"><i style="width:${Math.max(2, Math.round(c.hp * 100))}%"></i></div>`;
     if (c.urge) {
@@ -164,20 +174,22 @@ export const mountQuestHud: MountQuestHud = (root, host): QuestHud => {
     });
     B.querySelectorAll<HTMLButtonElement>('[data-adj]').forEach((b) => b.onclick = () => { try { localStorage.setItem(ADJ_KEY, String(Math.max(-10, Math.min(30, adj() + +b.dataset.adj!)))); } catch { /* */ } });
     (B.querySelector('[data-full]') as HTMLButtonElement).onclick = () => host.actions.openSitePanel('quest');
+    const vb = B.querySelector('[data-v3d]') as HTMLButtonElement | null;
+    if (vb) vb.onclick = () => window.dispatchEvent(new CustomEvent('l3d:expedition-toggle'));
   };
   const tick = () => {
     const dl = Math.max(0, ((buf[buf.length - 1]?.v as any)?.dl || 0) + adj()) * 1000, now = Date.now();
     while (buf.length && buf[0].at + dl <= now) { shown = buf.shift()!.v; }
     const me = { login: String(host.store.me?.login || ''), role: String(host.store.hero?.role || 'recruit') };
     const c = cardOf(shown, me, baseCmd);
-    const k = JSON.stringify(c);
+    const k = JSON.stringify(c) + (v3d ? '|3d' : v3dOn ? '|on' : '');
     if (k !== key) { key = k; render(c); }
     const sp = H.children[2] as HTMLElement;
     if (c?.until) { const s = Math.max(0, Math.ceil((c.until + dl - now) / 1000)); sp.textContent = `${c.right ? c.right + ' · ' : ''}${s} с`; sp.classList.toggle('hot', s <= 5); }
     else { sp.textContent = c?.right || ''; sp.classList.remove('hot'); }
     const dlEl = B.querySelector('.dl'); if (dlEl) dlEl.textContent = String(Math.round(dl / 1000));
-    lock.hidden = !(shown && (shown as any).on && (shown as any).party === 'in');
+    lock.hidden = v3d || !(shown && (shown as any).on && (shown as any).party === 'in');
   };
   const iv = window.setInterval(tick, 250); tick();
-  return { el: box, dispose() { clearInterval(iv); unsub(); box.remove(); } };
+  return { el: box, dispose() { clearInterval(iv); unsub(); window.removeEventListener('l3d:expedition', onV3d); box.remove(); } };
 };

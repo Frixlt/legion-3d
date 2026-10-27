@@ -13,6 +13,7 @@ const VERT = /* glsl */`
 attribute vec4 aCol;
 attribute vec3 aMisc;   // size, shape(+8 = additive), rotation
 uniform float uScale;
+uniform float uMax;
 varying vec4 vCol;
 varying float vShape;
 varying float vAdd;
@@ -20,7 +21,7 @@ varying float vRot;
 void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = clamp(aMisc.x * uScale / max(0.05, -mv.z), 0.0, 160.0);
+  gl_PointSize = clamp(aMisc.x * uScale / max(0.05, -mv.z), 0.0, uMax);
   vCol = aCol;
   vAdd = aMisc.y >= 8.0 ? 1.0 : 0.0;
   vShape = aMisc.y - vAdd * 8.0;
@@ -136,7 +137,7 @@ export class Fx {
     this.geo.setAttribute('position', pa); this.geo.setAttribute('aCol', ca); this.geo.setAttribute('aMisc', ma);
     this.geo.setDrawRange(0, 0);
     this.mat = new THREE.ShaderMaterial({
-      vertexShader: VERT, fragmentShader: FRAG, uniforms: { uScale: { value: 400 } },
+      vertexShader: VERT, fragmentShader: FRAG, uniforms: { uScale: { value: 400 }, uMax: { value: 160 } },
       transparent: true, depthWrite: false,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     });
@@ -157,6 +158,9 @@ export class Fx {
     this.root.add(this.ringMesh);
     for (let i = 0; i < RINGS; i++) this.rings.push({ on: false, x: 0, y: 0, z: 0, t: 0, len: 0, r0: 0, r1: 0, a: 0, soft: 0, fill: 0, col: new THREE.Color() });
   }
+
+  /** Largest drawn particle (px; default 160). Big effects (src/combat/boom.ts) raise it on their own Fx. */
+  set maxPointPx(v: number) { this.mat.uniforms.uMax.value = v; }
 
   /** Deterministic cheap random 0..1. */
   rnd(): number { this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0; return this.seed / 4294967296; }

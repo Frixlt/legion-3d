@@ -392,6 +392,7 @@ function build(ctx: EventContext, hooks: Hooks): () => void {
 const halloween: SeasonalEvent = {
   id: 'halloween',
   title: 'Хэллоуин',
+  greeting: '🎃 С Хэллоуином! Город украшен — отключить можно в настройках («События»).',
   active: (d) => inWindow(d, HALLOWEEN_FROM, HALLOWEEN_TO),
   distance: (d) => windowDistance(d, HALLOWEEN_FROM, HALLOWEEN_TO),
   setup,

@@ -73,3 +73,44 @@ export function eventHarness(q: QualityLevel = 2): Harness & { city: ReturnType<
     get hooks() { return frames.size + qfns.size; },
   };
 }
+
+/** Put the real batched static city (named 'city:<material>' meshes, standard materials) under the fake root's 'world:static'. */
+export async function withRealStatic(fake: ReturnType<typeof fakeWorldRoot>): Promise<THREE.Mesh[]> {
+  const { staticCity } = await import('./world-fixture');
+  const { k } = staticCity();
+  const mats: Record<string, THREE.Material> = {};
+  for (const key of ['brick', 'plaster', 'wood', 'roof', 'stone', 'rock', 'metal', 'canvas', 'paving', 'lowPaving', 'leaf', 'flat', 'dark', 'glass', 'back', 'emit', 'glow', 'sign', 'water']) {
+    mats[key] = new THREE.MeshStandardMaterial({ color: '#ffffff' }); mats[key].name = 'city:' + key;
+  }
+  const meshes = k.b.build(mats as never, { castShadow: () => false, receiveShadow: () => false });
+  const st = fake.root.getObjectByName('world:static')!;
+  for (const m of meshes) st.add(m);
+  fake.root.updateMatrixWorld(true);
+  return meshes;
+}
+
+/** A fake cat for the event game API: a root with a two-bone rig (root, body) like src/avatar (head skinned to the body). */
+export function fakeCat(x: number, y: number, z: number, opts: { top?: number; headTop?: number } = {}) {
+  const root = new THREE.Group(); root.position.set(x, y, z);
+  const b0 = new THREE.Bone(), b1 = new THREE.Bone(); b1.position.set(0, 0.6, 0); b0.add(b1); root.add(b0);
+  const top = opts.top ?? 1.2, headTop = opts.headTop ?? top + 0.1;
+  const rest = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0.6, 0)];
+  root.updateMatrixWorld(true);
+  return { root, headTop, combatRig: () => ({ bones: [b0, b1], rest, top, headTop, w: 0.3 }) };
+}
+
+/** A fake EventGame recording keys and knocks; `act` toggles canAct(). */
+export function fakeGame(cats: Map<string, ReturnType<typeof fakeCat>>, me?: ReturnType<typeof fakeCat>) {
+  const keys = new Map<string, { code: string; run: () => boolean }>(), knocks: string[] = [];
+  const st = { act: true, meVisible: true, swings: 0 };
+  const game: import('../src/events/types').EventGame = {
+    key: (id, code, _label, run) => { keys.set(id, { code, run }); return () => keys.delete(id); },
+    canAct: () => st.act,
+    forEachCat: (fn) => { for (const [id, c] of cats) fn(id, c); },
+    me: () => (me ? { av: me, visible: st.meVisible } : null),
+    knock: (id) => { knocks.push(id); return true; },
+    swing: () => { st.swings++; },
+    reducedMotion: false,
+  };
+  return { game, keys, knocks, st };
+}

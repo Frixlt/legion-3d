@@ -79,7 +79,7 @@ describe('input gate', () => {
   it('refuses everything else, interactables first-class', () => {
     expect(gate({ ...OK, enabled: false })).toBe('off');
     expect(gate({ ...OK, aimed: true })).toBe('interactable');
-    expect(gate({ ...OK, room: 'shop3d' })).toBe('room');
+    expect(gate({ ...OK, room: 'shop3d' })).toBeNull();   // 3D shops fight too (goods under the crosshair keep LMB)
     expect(gate({ ...OK, room: 'hybrid' })).toBe('room');
     expect(gate({ ...OK, stage: true })).toBe('scene');
     expect(gate({ ...OK, busy: true })).toBe('loading');

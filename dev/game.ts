@@ -14,6 +14,7 @@ import session from '../test/fixtures/city-session.json';
 import stock from '../test/fixtures/stock.json';
 import { FakeMine, makeBus } from '../src/rooms/mine/fake';
 import mineEnter from '../test/fixtures/mine-enter.json';
+import { FakeQuest } from '../src/quest/fake';
 
 const layout = fixtureLayout();
 const store = createStore();
@@ -86,6 +87,9 @@ const isMine = (p: string) => /^\/api\/(mine\/|mine[A-Z])/.test(p);
 actions.get = ((g) => (p: string) => (isMine(p) ? mine().api(p) : g(p)))(actions.get) as Actions['get'];
 actions.post = ((g) => (p: string, b?: unknown) => (isMine(p) ? mine().api(p, b) : g(p, b)))(actions.post) as Actions['post'];
 let toastDemo = (t: string) => console.log(t);
+
+/* ---- expedition (dev toggle): ?quest=1 feeds the offline FakeQuest into store.quest (?quest=2 = double speed); Q opens it in 3D ---- */
+const QS = new URLSearchParams(location.search).get('quest'); if (QS) new FakeQuest({ login: String(hero.login).toLowerCase(), role: ((hero as any).role || 'archer'), speed: +QS || 1 }).run({ emit: (_t: string, d: unknown) => store.setQuest(d as any) });
 
 const site: SiteSession = {
   store, actions,

@@ -13,6 +13,8 @@ import { saveSetting, type UiSettings } from './settings';
 import { settingRows, settingRow, readRow, writeRow, pauseItems as extPauseItems, pauseItem } from './settings-ext';
 import type { TabEntry } from './tabs';
 import { MapView } from './map';
+import { earnedMedals } from '../collect/medals';
+import { milestones } from '../collect/milestones';
 import type { GameContext } from '../contracts/ext';
 
 export const STANDALONE = ['pause', 'settings', 'help'];
@@ -263,6 +265,8 @@ export class Menus {
         : `<span class="cell empty">${slotSilhouette(s)}</span>`;
       return `<button type="button" class="slot${s === this.gSlot ? ' sel' : ''}" data-act="slot" data-slot="${s}" style="left:${pos[s][0]}%;top:${pos[s][1]}%"${it ? ` data-uid="${esc(it.uid)}"` : ''}>${inner}<span class="sl">${SLOT_NAME[s]}${it && it.en ? ` +${it.en}` : ''}</span></button>`;
     }).join('');
+    const medals = earnedMedals(H);
+    const medHtml = '<div class="gear-medals" aria-label="Медали">' + (medals.length ? medals.slice(0, 3).map((m, i) => '<span title="' + esc(m.name) + '" style="--i:' + i + ';left:' + (20 + i*30) + '%">' + esc(m.icon) + '</span>').join('') + (medals.length > 3 ? '<span style="left:91%">+' + (medals.length - 3) + '</span>' : '') : '<small>Пока нет медалей</small>') + '</div>';
     const pen = H.gearPen as any;
     const penHtml = pen && pen.pct ? `<p class="note warn pen">⚠ Надеты вещи другого класса — дебафф −${pen.pct}% ${esc(pen.statName || '')}${Array.isArray(pen.parts) ? '<br>' + pen.parts.map((p: any) => `${esc(p.name)} — ${esc(p.gearName || p.gear || '')}`).join('<br>') : ''}</p>` : '';
     const lock = this.lockText(H);
@@ -279,8 +283,8 @@ export class Menus {
     const busyIc = H.busy || H.ghost ? ` <span title="${esc(lock || '')}" style="display:inline-block;width:18px;height:18px;vertical-align:-3px">${statIcon(H.ghost ? 'ghost' : 'lock', 'si')}</span>` : '';
     return `<div class="page p-gear" data-page="gear">${this.pan('', 'Снаряжение', `
       <div class="dollc"><div class="who"><b>${esc(H.name)}</b><span class="lvl">Ур. ${H.level}</span>${busyIc}<div class="cls">${esc(H.roleName || CLASS_NAME[H.role] || '')}${H.soc ? ` · <span class="emo">${esc(H.soc.icon)}</span> ${esc(H.soc.rankName)}` : ''}</div></div>
-        <div class="doll"><div class="ring"></div><svg class="figure" viewBox="0 0 92 120" aria-hidden="true"><path d="M22 34 L28 8 L42 26 Q46 25 50 26 L64 8 L70 34 Q80 46 80 64 L80 92 Q80 114 46 114 Q12 114 12 92 L12 64 Q12 46 22 34 Z" fill="#ffcf6a" opacity=".16"/><circle cx="34" cy="56" r="5" fill="#ffcf6a" opacity=".3"/><circle cx="58" cy="56" r="5" fill="#ffcf6a" opacity=".3"/></svg>${slots}</div>${penHtml}</div>
-      <div class="det">${back}<div class="scroll">${card}<div class="h3">Подходит в слот <span class="mut">${fits.length}</span></div>${list}</div></div>`)}</div>`;
+        <div class="doll"><div class="ring"></div>${medHtml}<svg class="figure" viewBox="0 0 92 120" aria-hidden="true"><path d="M22 34 L28 8 L42 26 Q46 25 50 26 L64 8 L70 34 Q80 46 80 64 L80 92 Q80 114 46 114 Q12 114 12 92 L12 64 Q12 46 22 34 Z" fill="#ffcf6a" opacity=".16"/><circle cx="34" cy="56" r="5" fill="#ffcf6a" opacity=".3"/><circle cx="58" cy="56" r="5" fill="#ffcf6a" opacity=".3"/></svg>${slots}</div>${penHtml}</div>
+      <div class="det"><button type="button" class="btn ghost sm" data-gear-snapshot>📸 Снимок</button>${back}<div class="scroll">${card}<div class="h3">Подходит в слот <span class="mut">${fits.length}</span></div>${list}</div></div>`)}</div>`;
   }
 
   /* ------------------------------------------------------------ Сумка */
@@ -411,7 +415,9 @@ export class Menus {
       const more = this.jNext != null ? `<div style="text-align:center;margin:14px 0 4px"><button type="button" class="btn ghost sm" data-act="jmore"${this.jLoading ? ' disabled' : ''}>${this.jLoading ? 'Секунду…' : 'Показать ещё'}</button></div>` : '';
       inner = `${sum}<div class="scroll">${rows}${more}</div>`;
     }
-    return `<div class="page p-log" data-page="log">${this.pan('', `Журнал${this.jList ? `<small>· ${this.jList.length}</small>` : ''}`, `<div class="filters">${tabs}</div>${inner}`)}</div>`;
+    const m = milestones(this.jList || []);
+    const timeline = '<section class="milestones"><div class="h3">Вехи <small>среди загруженных записей</small></div>' + (m.length ? m.slice(0, 12).map((x) => '<p>✦ ' + esc(x.label) + ' · ' + esc(new Date(x.at).toLocaleDateString('ru-RU')) + '</p>').join('') : '<p>В загруженных записях пока нет вех.</p>') + '</section>';
+    return `<div class="page p-log" data-page="log">${this.pan('', `Журнал${this.jList ? `<small>· ${this.jList.length}</small>` : ''}`, `<div class="filters">${tabs}</div>${timeline}${inner}`)}</div>`;
   }
 
   /* ------------------------------------------------------------ classic entries */
@@ -530,6 +536,7 @@ export class Menus {
     for (const r of settingRows()) {
       if (r.group && r.group !== g) { g = r.group; out += `<div class="setgroup">${esc(g)}</div>`; }
       const v = readRow(r);
+      if (r.kind === 'info') { let t = ''; try { t = r.text(); } catch { t = ''; } out += `<div class="setinfo">${r.label ? `<b>${esc(r.label)}</b> ` : ''}${esc(t)}</div>`; continue; }
       const ctl = r.kind === 'range'
         ? `<span class="rng"><input type="range" data-xk="${esc(r.key)}" min="${r.min}" max="${r.max}" step="${r.step}" value="${v}"><b>${esc(r.fmt ? r.fmt(+v) : String(v))}</b></span>`
         : `<span class="seg">${r.options.map(([ov, t]) => `<button type="button" data-act="xset" data-xk="${esc(r.key)}" data-v="${esc(ov)}" class="${ov === v ? 'on' : ''}">${esc(t)}</button>`).join('')}</span>`;
@@ -544,7 +551,7 @@ export class Menus {
       [['Tab'], 'Персонаж'], [['C'], 'Снаряжение'], [['I', 'B'], 'Сумка'], [['P'], 'Характеристики'], [['K'], 'Навыки'], [['Y'], 'Достижения'],
       [['J'], 'Журнал'], [['O'], 'Облик'], [['M'], 'Карта'], [['R'], 'Рейтинг Легиона'], [['N'], 'Новости'], [['Q'], 'Поход (во время похода)'],
       [['Enter', 'T'], 'Чат'], [['/'], 'Команда в чат'], [['F1', 'H'], 'Эта подсказка'], [['F2'], 'Спрятать интерфейс'], [['F3'], 'Счётчик кадров'],
-      [['F8'], 'Классический сайт'], [['Esc'], 'Закрыть / пауза'], [['Q', 'E'], 'В меню: соседние вкладки'], [['⇧'], 'В сумке: сравнить с надетым'],
+      [['F8'], 'Классический сайт'], [['F9'], 'Фоторежим'], [['G'], 'Снежок (в новогодние дни)'], [['Esc'], 'Закрыть / пауза'], [['Q', 'E'], 'В меню: соседние вкладки'], [['⇧'], 'В сумке: сравнить с надетым'],
     ];
     for (const t of this.c.tabs.all()) if (t.def && t.key) K.push([[t.key], t.name]);
     return `<div class="page p-help" data-page="help">${this.pan('', 'Управление', `<div class="scroll"><div class="keys">${K.map(([ks, t]) => `<div><span class="kk">${ks.map((k) => `<i class="kc sm dk">${esc(k)}</i>`).join('')}</span><span>${t}</span></div>`).join('')}</div></div>

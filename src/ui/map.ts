@@ -12,6 +12,7 @@
 import type { CityLayout, Walker } from '../contracts';
 import { type Ctx, h, extras } from './ctx';
 import { esc } from './data';
+import { readFavorites, writeFavorites, toggleFavorite } from '../collect/favorites';
 import { toX, toZ, fromX, fromZ } from '../world/coords';
 import { mapFeatures, fitView, zoomAt, clampView, placeLabels, faceToDeg, type MapFeatures, type View, type LabelIn } from './mapdata';
 
@@ -169,7 +170,7 @@ export class MapView {
   readonly el: HTMLElement;
   private c: Ctx; private src: MapSource;
   private cv: HTMLCanvasElement; private g: CanvasRenderingContext2D;
-  private pinsEl: HTMLElement; private meEl: HTMLElement; private pop: HTMLElement; private zoomT: HTMLElement;
+  private pinsEl: HTMLElement; private favEl: HTMLElement; private meEl: HTMLElement; private pop: HTMLElement; private zoomT: HTMLElement;
   private pinEls = new Map<string, HTMLElement>();
   private v: View = { k: 1, tx: 0, ty: 0 }; private fitK = 1; private fitted = false;
   private w = 0; private hh = 0; private dpr = 1;
@@ -183,10 +184,10 @@ export class MapView {
     this.c = c; this.src = src;
     this.el = h('div', 'mapv');
     this.el.innerHTML = `<canvas class="mapc"></canvas><div class="mpins"></div><div class="mme" aria-label="Ты"><i></i></div>
-      <div class="mpop" hidden></div>
+      <div class="mpop" hidden></div><div class="mfavs" aria-label="Избранные места"></div>
       <div class="mzoom"><button type="button" data-mz="in" aria-label="Приблизить">+</button><span class="mzt">100%</span><button type="button" data-mz="out" aria-label="Отдалить">−</button><button type="button" data-mz="fit" aria-label="Весь город" title="Весь город">⤢</button><button type="button" data-mz="me" aria-label="Где я" title="Где я">◎</button></div>`;
     this.cv = this.el.querySelector('canvas')!; this.g = this.cv.getContext('2d')!;
-    this.pinsEl = this.el.querySelector('.mpins')!; this.meEl = this.el.querySelector('.mme')!; this.pop = this.el.querySelector('.mpop')!;
+    this.pinsEl = this.el.querySelector('.mpins')!; this.favEl = this.el.querySelector('.mfavs')!; this.meEl = this.el.querySelector('.mme')!; this.pop = this.el.querySelector('.mpop')!;
     this.zoomT = this.el.querySelector('.mzt')!;
     this.unsub = src.onChange(() => { this.draw(); });
     const g = this.g;
@@ -266,6 +267,12 @@ export class MapView {
   }
 
   private layoutPins(F: MapFeatures) {
+    const town = this.c.host.store.layout?.id || 'unknown';
+    const fav = readFavorites(town, F.pins.map((p) => p.id));
+    this.favEl.innerHTML = fav.length ? '<b>★ Избранное</b>' + fav.map((id) => {
+      const p = F.pins.find((x) => x.id === id)!;
+      return '<button type="button" data-favgo="' + esc(id) + '">' + esc(p.icon) + ' ' + esc(p.title) + '</button>';
+    }).join('') : '';
     const v = this.v;
     if (this.pinEls.size !== F.pins.length || !F.pins.every((p) => this.pinEls.has(p.id))) {
       this.pinsEl.textContent = ''; this.pinEls.clear();
@@ -279,7 +286,7 @@ export class MapView {
     for (const p of F.pins) {
       const el = this.pinEls.get(p.id)!;
       el.style.transform = `translate(${(p.x * v.k + v.tx).toFixed(1)}px,${(p.z * v.k + v.ty).toFixed(1)}px)`;
-      el.classList.toggle('sel', p.id === this.sel);
+      el.classList.toggle('sel', p.id === this.sel); el.classList.toggle('favorite', fav.includes(p.id));
     }
     if (this.dirtyLabels) {
       this.dirtyLabels = false;
@@ -306,7 +313,7 @@ export class MapView {
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const t = e.target as HTMLElement;
-      if (t.closest('.mpin, .mpop, .mzoom')) return;
+      if (t.closest('.mpin, .mpop, .mzoom, .mfavs')) return;
       this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, tx: this.v.tx, ty: this.v.ty, moved: false };
       try { el.setPointerCapture(e.pointerId); } catch { /* */ }
       el.classList.add('grab');
@@ -355,6 +362,8 @@ export class MapView {
         else if (m === 'me') this.centerMe();
         return;
       }
+      const fg = t.closest<HTMLElement>('[data-favgo]'); if (fg) { this.select(fg.dataset.favgo!); return; }
+      const star = t.closest<HTMLElement>('[data-fav]'); if (star) { this.toggleStar(star.dataset.fav!); return; }
       const pin = t.closest<HTMLElement>('.mpin');
       if (pin) { this.select(pin.dataset.pin!); return; }
       const go = t.closest<HTMLElement>('[data-go]');
@@ -378,6 +387,13 @@ export class MapView {
     this.v = { k, tx: this.w / 2 - toX(me.x) * k, ty: this.hh / 2 - toZ(me.y) * k };
     clampView(this.v, F.bounds, this.w, this.hh); this.dirtyLabels = true; this.draw();
   }
+  private toggleStar(id: string) {
+    const F = this.src.features(), town = this.c.host.store.layout?.id; if (!F || !town) return;
+    const ids = readFavorites(town, F.pins.map((p) => p.id));
+    const next = toggleFavorite(ids, id);
+    if (next.length === ids.length && !ids.includes(id)) { this.c.toast("Не больше пяти избранных мест"); return; }
+    writeFavorites(town, next); this.sel = null; this.select(id);
+  }
   private select(id: string) {
     this.sel = this.sel === id ? null : id;
     this.dirtyLabels = true;
@@ -385,10 +401,13 @@ export class MapView {
     const F = this.src.features(); const p = F?.pins.find((x) => x.id === id); if (!p) return;
     const me = mePos(this.c);
     const dist = me ? Math.round(Math.hypot(toX(me.x) - toX(p.door.x), toZ(me.y) - toZ(p.door.y))) : null;
+    const town = this.c.host.store.layout?.id || 'unknown';
+    const starred = readFavorites(town, F!.pins.map((x) => x.id)).includes(id);
     const canWalk = typeof extras(this.c.host).walkTo === 'function';
     const sub = p.soon ? 'Ещё строится — скоро откроется' : p.sub || (p.lower ? 'Нижняя улица' : 'Ярмарочная улица');
     this.pop.innerHTML = `<button type="button" class="px" data-popx aria-label="Закрыть">✕</button><div class="pt"><span class="emo">${esc(p.icon)}</span><b>${esc(p.title)}</b></div>
       <div class="ps">${esc(sub)}${dist != null ? ` · <span class="mut">${dist < 1 ? 'ты здесь' : '~' + dist + ' м'}</span>` : ''}</div>
+      <button type="button" class="btn ghost sm" data-fav="${esc(p.id)}" aria-pressed="${starred}">${starred ? "★ В избранном" : "☆ В избранное"}</button>
       ${canWalk ? `<button type="button" class="btn gold sm" data-go="${esc(p.id)}"${dist != null && dist < 1 ? ' disabled' : ''}>Идти сюда</button>` : `<p class="mut ph">Подойди сам — на карте нет автопути.</p>`}`;
     this.pop.hidden = false;
     this.draw();

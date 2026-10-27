@@ -42,3 +42,5 @@ Rebuild after changing the list: download the sources into `.local/sound/` (layo
 `SND_SRC=.local/sound node src/audio/tools/gen-combat-sfx.mjs` (writes `gen/*.wav`) and
 `SND_SRC=.local/sound node src/audio/tools/prepare-sounds.mjs`. The bow draw reuses `creak_2`, an arrow hitting a cat
 reuses `land_0…2` (pitched up).
+| src/audio/sounds/boom_0.ogg | synthesised, src/audio/tools/gen-combat-sfx.mjs (boom) | CC0 | Legion 3D |
+| src/audio/sounds/fuse_0.ogg | synthesised, src/audio/tools/gen-combat-sfx.mjs (fuse) | CC0 | Legion 3D |

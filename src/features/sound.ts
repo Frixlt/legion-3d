@@ -86,7 +86,7 @@ export default coreFeature({
       const d = (e as CustomEvent<SfxEventDetail>).detail;
       if (!eng || !d || typeof d.id !== 'string') return;
       const id = d.id === 'door.open' && space === 'tent' ? 'tent.flap' : d.id;   // the tent's exit is a cloth flap
-      eng.play(id, { ...(typeof d.x === 'number' ? { x: d.x, y: d.y, z: d.z } : {}), gain: typeof d.gain === 'number' ? d.gain : 1 });
+      eng.play(id, { ...(typeof d.x === 'number' ? { x: d.x, y: d.y, z: d.z } : {}), gain: typeof d.gain === 'number' ? d.gain : 1, ...(typeof d.rate === 'number' ? { rate: d.rate } : {}), ...(typeof d.follow === 'function' ? { follow: d.follow } : {}) });
     };
     window.addEventListener('l3d:sfx', onSfx);
     offs.push(() => window.removeEventListener('l3d:sfx', onSfx));

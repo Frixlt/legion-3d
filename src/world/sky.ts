@@ -91,3 +91,48 @@ export function glowPoints(data: number[], stride: 7 | 6, tex: THREE.Texture, op
   const p = new THREE.Points(g, mat); p.name = 'fx:glow';
   return p;
 }
+
+/**
+ * Cat-shaped constellations (idea #5): ONE mesh — star quads + line ribbons of all figures — drawn additively at the sky's
+ * far plane. Each figure has a "reveal" (uReveal[i] 0…1, driven by the gaze in src/features/stars.ts): lines are faint
+ * until revealed, then glow; star discs sit slightly above the field stars at rest. The mesh follows the camera.
+ */
+export interface ConstellationMesh extends THREE.Mesh { userData: { reveal: THREE.Vector4; time: { value: number } } }
+export function constellationMesh(b: { position: Float32Array; uv: Float32Array; kind: Float32Array; con: Float32Array; index: Uint16Array }): ConstellationMesh {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(b.position, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(b.uv, 2));
+  g.setAttribute('kind', new THREE.BufferAttribute(b.kind, 1));
+  g.setAttribute('con', new THREE.BufferAttribute(b.con, 1));
+  g.setIndex(new THREE.BufferAttribute(b.index, 1));
+  const reveal = new THREE.Vector4(0, 0, 0, 0);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uReveal: { value: reveal }, uTime: { value: 0 } },
+    vertexShader: /* glsl */`attribute float kind; attribute float con; uniform vec4 uReveal; uniform float uTime;
+      varying vec2 vUv; varying float vK; varying float vR;
+      void main(){ vUv = uv; vK = kind;
+        vec4 sel = max(vec4(1.0) - abs(vec4(con) - vec4(0.0, 1.0, 2.0, 3.0)), vec4(0.0));
+        vR = dot(uReveal, sel);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p; gl_Position.z = gl_Position.w * 0.9998; }`,
+    fragmentShader: /* glsl */`uniform float uTime; varying vec2 vUv; varying float vK; varying float vR;
+      void main(){
+        vec3 warm = vec3(1.0, 0.93, 0.78), cool = vec3(0.72, 0.8, 1.0);
+        float a, glow = vR;
+        if (vK > 0.5) {                                   // star disc: soft dot with a small cross
+          float d = length(vUv);
+          a = exp(-d * d * 7.0) + 0.5 * exp(-abs(vUv.x) * 16.0) * smoothstep(1.0, 0.1, abs(vUv.y)) + 0.5 * exp(-abs(vUv.y) * 16.0) * smoothstep(1.0, 0.1, abs(vUv.x));
+          a *= 0.55 + 0.6 * glow;
+        } else {                                          // line ribbon: soft across, fades out at both ends
+          float across = exp(-vUv.y * vUv.y * 3.5), along = smoothstep(0.0, 0.18, vUv.x) * smoothstep(1.0, 0.82, vUv.x);
+          a = across * along * (0.16 + 1.0 * glow) * (1.0 + 0.12 * sin(uTime * 2.0 + vUv.x * 9.0) * glow);
+        }
+        vec3 c = mix(cool, warm, vK * 0.5 + glow * 0.4);
+        gl_FragColor = vec4(c * a, a);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(g, mat) as unknown as ConstellationMesh;
+  m.name = 'sky:constellations'; m.frustumCulled = false; m.renderOrder = -8.5;
+  m.userData = { reveal, time: mat.uniforms.uTime };
+  return m;
+}

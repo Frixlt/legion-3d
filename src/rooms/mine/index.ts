@@ -22,6 +22,8 @@ import { N_CELLS, REACH, mx, mz, px, py, spawnPt, frontOfObj, cellXY, type Pt } 
 import { TX, blockTitle, gotText } from './state';
 import { pickaxeGeo } from './art';
 import { attachMineChat } from '../../ui/chat';
+import type { Avatar } from '../../contracts/modules';
+import type { RoomCombat, RoomFighter } from '../../combat/room';
 
 export { MineClient } from './net';
 export { MineModel } from './state';
@@ -254,7 +256,42 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
     hud.update(dt, project);
   });
 
-  const roomScene: RoomScene = {
+  /* ---------------------------------------------------------------- fights («Драки с котиками», src/combat/room.ts) */
+  // other miners are placed by the scene every frame (like the street crowd); the buyer / supplier NPCs stand still,
+  // so combat puts them back on their spot. Client-only: nobody else sees it, nothing is sent to the game.
+  const peek = scene as unknown as { actors?: Map<string, { av: Avatar }>; npcs?: Avatar[] };
+  const miners = new Map<Avatar, RoomFighter>();
+  const afterFns: ((dt: number, t: number) => void)[] = [];
+  const fighterOf = (av: Avatar, id: string, npc: boolean): RoomFighter => {
+    let f = miners.get(av);
+    if (!f) {
+      f = { id, av, kind: npc ? 'npc' : 'miner', home: npc ? { x: av.root.position.x, y: av.root.position.y, z: av.root.position.z } : null };
+      miners.set(av, f);
+    }
+    return f;
+  };
+  const combat: RoomCombat = {
+    fighters(fn) {
+      if (peek.actors) for (const [l, a] of peek.actors) fn(fighterOf(a.av, 'mine:' + l, false));
+      if (peek.npcs) for (let i = 0; i < peek.npcs.length; i++) fn(fighterOf(peek.npcs[i], 'mine:npc:' + i, true));
+    },
+    afterUpdate(fn) { afterFns.push(fn); return () => { const k = afterFns.indexOf(fn); if (k >= 0) afterFns.splice(k, 1); }; },
+    // the buyer / supplier stand on cells nobody walks on: around them bodies may lie (else a knocked-over NPC that
+    // starts inside rock would slide through it)
+    space: {
+      free: (x, z) => {
+        if (scene.free(M.dug, x, z)) return true;
+        const n = peek.npcs;
+        if (n) for (let i = 0; i < n.length; i++) { const f = miners.get(n[i]); if (f && f.home && Math.abs(x - f.home.x) < 0.7 && Math.abs(z - f.home.z) < 0.7) return true; }
+        return false;
+      },
+      groundAt: () => 0,
+    },
+  };
+  let sweepT = 0;
+
+  const roomScene: RoomScene & { combat: RoomCombat } = {
+    combat,
     root: scene.root,
     free: (x, z) => scene.free(M.dug, x, z),
     groundAt: () => 0,
@@ -266,8 +303,12 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
       const tg = ctx.interact.target; let aim = -1;
       if (tg && tg.id.startsWith('mine:stone:')) aim = +tg.id.slice(11);
       scene.update(dt, t, camera, M, Date.now(), aim, feet3);
+      for (let i = 0; i < afterFns.length; i++) afterFns[i](dt, t);
+      // forget miners that left (their avatars are disposed by the scene)
+      if ((sweepT += dt) > 5) { sweepT = 0; for (const av of miners.keys()) if (!av.root.parent) miners.delete(av); }
     },
     dispose() {
+      afterFns.length = 0; miners.clear();
       offFrame(); offEv(); offChatTab(); offKey(); for (const u of unsubs) u();
       client.close(); hud.dispose();
       if (vmHidden && core.vm) core.vm.setVisible(true);

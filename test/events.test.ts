@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { inWindow, windowDistance, pickEvent, parseMode } from '../src/events/calendar';
-import { EVENTS, EVENT_SETTING } from '../src/events';
+import { EVENTS, EVENT_SETTING, EVENT_PICK_SETTING } from '../src/events';
 import halloween from '../src/events/halloween';
 import type { SeasonalEvent } from '../src/events/types';
 import { forcedEvent } from '../src/features/seasonal';
@@ -45,11 +45,27 @@ describe('pickEvent', () => {
     expect(pickEvent([a, b], d(2026, 7, 10), 'off', 'b')?.id).toBe('b');
     expect(pickEvent([a, b], d(2026, 7, 10), 'auto', 'zzz')).toBeNull();
   });
-  it('the real registry: Halloween is registered, today in October runs it, July does not', () => {
-    expect(EVENTS.map((e) => e.id)).toContain('halloween');
+  it('the real registry: four events, each in its window; «Всегда» picks the nearest window', () => {
+    expect(EVENTS.map((e) => e.id)).toEqual(['halloween', 'newyear', 'summer', 'aprilfools']);
     expect(pickEvent(EVENTS, d(2026, 10, 27), 'auto')?.id).toBe('halloween');
-    expect(pickEvent(EVENTS, d(2026, 7, 27), 'auto')).toBeNull();
-    expect(pickEvent(EVENTS, d(2026, 7, 27), 'on')?.id).toBe('halloween');
+    expect(pickEvent(EVENTS, d(2026, 12, 31), 'auto')?.id).toBe('newyear');
+    expect(pickEvent(EVENTS, d(2027, 1, 10), 'auto')?.id).toBe('newyear');
+    expect(pickEvent(EVENTS, d(2027, 6, 25), 'auto')?.id).toBe('summer');
+    expect(pickEvent(EVENTS, d(2027, 4, 1), 'auto')?.id).toBe('aprilfools');
+    expect(pickEvent(EVENTS, d(2026, 8, 27), 'auto')).toBeNull();
+    expect(pickEvent(EVENTS, d(2026, 7, 27), 'on')?.id).toBe('summer');
+    expect(pickEvent(EVENTS, d(2026, 9, 20), 'on')?.id).toBe('halloween');
+    expect(pickEvent(EVENTS, d(2026, 11, 30), 'on')?.id).toBe('newyear');
+    expect(pickEvent(EVENTS, d(2027, 3, 20), 'on')?.id).toBe('aprilfools');
+    for (const e of EVENTS) { expect(e.title.length).toBeGreaterThan(2); expect((e.short ?? e.title).length).toBeLessThanOrEqual(10); expect(e.greeting).toMatch(/Отключить|отключить/); }
+  });
+  it('«Какое событие» (prefer) only applies to «Всегда»; «near» / unknown falls back to the date', () => {
+    expect(pickEvent(EVENTS, d(2026, 10, 27), 'on', null, 'summer')?.id).toBe('summer');
+    expect(pickEvent(EVENTS, d(2026, 10, 27), 'auto', null, 'summer')?.id).toBe('halloween');
+    expect(pickEvent(EVENTS, d(2026, 10, 27), 'off', null, 'summer')).toBeNull();
+    expect(pickEvent(EVENTS, d(2026, 10, 27), 'on', null, 'near')?.id).toBe('halloween');
+    expect(pickEvent(EVENTS, d(2026, 10, 27), 'on', 'aprilfools', 'summer')?.id).toBe('aprilfools');
+    expect(EVENT_PICK_SETTING).toBe('l3d.event.pick');
   });
   it('parseMode accepts the three modes and falls back to auto; the setting key is stable', () => {
     expect(['auto', 'on', 'off', 'x', null, 3].map(parseMode)).toEqual(['auto', 'on', 'off', 'auto', 'auto', 'auto']);

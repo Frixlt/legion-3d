@@ -9,6 +9,8 @@
  *   trail.ts        the swing "swoosh" ribbon (one draw call)  projectiles.ts  arrows (instanced) and orbs
  *   zombies.ts      necromancer minions (separation steering)  bubble.ts   their «Мозги… Рыыыбки!» bubble
  *   sweep.ts        segment/capsule + melee cone (pure)
+ *   room.ts         fights inside rooms: the room scene's `combat` field (fighters: shopkeepers, tent mannequins,
+ *                   mine miners / NPCs; a hook after the room's own update) and the room's floor/solids as a RagdollEnv
  *
  * CombatSystem is engine-agnostic: the game feature (src/features/combat.ts) and the dev page (dev/combat.ts) give
  * it a CombatHost. Call press()/release() for LMB and update() once per frame AFTER the crowd has animated the
@@ -32,13 +34,17 @@ import { Zombies, type ZombieTarget } from './zombies';
 import { inCone } from './sweep';
 import { separateRagdolls, pushOutOfCapsule, type RagdollEnv } from './physics';
 import { SwingTrail } from './trail';
+import { blastImpulse } from './boom';
 
 export { gate, attackKind, SPECS, BOW, Cooldowns, COMBAT_ROOMS } from './rules';
 export type { GateInput, AttackKind } from './rules';
+export { BOOM, BoomCooldown, blastImpulse } from './boom';
 
 export const MAX_RAGDOLLS = 6;
 /** At most this many hit flashes (one extra draw call each) at the same time. */
 export const MAX_FLASHES = 2;
+/** A blast (src/combat/boom.ts) may toss this many at once for a few seconds. */
+export const MAX_BLAST_RAGDOLLS = 14;
 
 export interface CombatHost {
   scene: THREE.Scene;
@@ -99,6 +105,9 @@ export class CombatSystem {
   private drawStart = -1;
   private now = 0;
   private shake = 0; private shakeT = 0;
+  /** Blast hits waiting for the shock front to reach them (see blast()); a raised ragdoll cap until bigUntil. */
+  private blastQ: { id: string; av: CombatAvatar; at: number; v: [number, number, number, number, number, number, number] }[] = [];
+  private bigUntil = -Infinity;
   /** ms of physics + pose work in the last update (perf HUD / tests). */
   lastMs = 0;
   /** Stats for the perf report. */
@@ -198,7 +207,7 @@ export class CombatSystem {
       if (!rig) return false;
       r = new AvatarRagdoll(id, av, rig, stop, flash);
       this.ragdolls.set(id, r);
-      if (this.ragdolls.size > MAX_RAGDOLLS) {
+      if (this.ragdolls.size > (this.now < this.bigUntil ? MAX_BLAST_RAGDOLLS : MAX_RAGDOLLS)) {
         let old: AvatarRagdoll | null = null;
         for (const q of this.ragdolls.values()) if (q !== r && (q.phase === 'fall' || q.phase === 'down') && (!old || q.age > old.age)) old = q;
         old?.hurry();
@@ -207,7 +216,6 @@ export class CombatSystem {
     r.push(vx, vy, vz, px, py, pz, falloff, spin);
     return true;
   }
-
   private isDown(id: string) { const r = this.ragdolls.get(id); return !!r && r.phase !== 'return'; }
 
   private collectTargets() {
@@ -405,6 +413,48 @@ export class CombatSystem {
     if (n) this.feelHit(0, s.shake);
   }
 
+  /**
+   * A big comic blast at (x, y, z): everyone standing within `radius` m is tossed outwards and up (spinning), the
+   * near ones harder, each when the shock front (`speed` m/s) reaches them. Returns how many will be hit. The own
+   * hero is never a target. Events: 'l3d:combat' kind 'blast' per cat (+ a bonk sound for the first few).
+   */
+  blast(x: number, y: number, z: number, radius: number, speed = 30, impulse = blastImpulse): number {
+    this.collectTargets();
+    let n = 0;
+    for (let i = 0; i < _t.length; i++) {
+      const c = _t[i], dx = c.x - x, dz = c.z - z, d = Math.hypot(dx, dz);
+      if (d > radius || Math.abs(c.y - y) > 6 || this.blastQ.some((q) => q.id === c.id)) continue;
+      const ux = d > 0.05 ? dx / d : Math.cos(i * 2.4), uz = d > 0.05 ? dz / d : Math.sin(i * 2.4);
+      const k = impulse(d, radius);
+      this.blastQ.push({ id: c.id, av: _avs[i], at: this.now + d / speed, v: [ux * k.push, k.up, uz * k.push, c.x - ux * c.r, c.y + c.h * 0.35, c.z - uz * c.r, k.spin] });
+      n++;
+    }
+    this.bigUntil = this.now + 6;
+    this.blastQ.sort((a, b) => a.at - b.at);
+    // the nearest one goes at once: a live ragdoll keeps the combat update running even with fights switched off,
+    // so the rest of the queue is served by update()
+    if (this.blastQ.length) { this.blastQ[0].at = this.now; this.blastHits(); }
+    return n;
+  }
+  private blastHits() {
+    let bonks = 0;
+    while (this.blastQ.length && this.blastQ[0].at <= this.now) {
+      const q = this.blastQ.shift()!;
+      if (!q.av.root.parent || !q.av.root.visible) continue;
+      const v = q.v;
+      if (this.hit(q.id, q.av, v[0], v[1], v[2], v[3], v[4], v[5], 0.03, 0.35, v[6])) {
+        const p = q.av.root.position;
+        dispatch('blast', p.x, p.y + 0.6, p.z, bonks < 2 ? 'combat.hit' : undefined, { target: q.id });
+        bonks++;
+        this.fx.emit(SH_STAR, p.x, p.y + 0.9, p.z, 0, 2.5, 0, 0.7, 0.2, 0.1, 1, 0.9, 0.35, 1, -3, 1, false, 0, 6);
+      }
+    }
+  }
+  /** Blast hits still on their way (tests). */
+  get blastPending(): number { return this.blastQ.length; }
+  /** Something still has to be updated even with fights switched off (a blast on its way, ragdolls). */
+  get busy(): boolean { return this.blastQ.length > 0 || this.ragdolls.size > 0; }
+
   update(dt: number, t: number) {
     const t0 = performance.now();
     this.now = t;
@@ -420,6 +470,7 @@ export class CombatSystem {
         if (full) this.fx.emit(SH_STAR, _ta.x, _ta.y, _ta.z, 0, 0, 0, 0, (0.09 + 0.03 * Math.sin(t * 18)) * s, 0, 1, 0.96, 0.75, 1, 0, 0, false, t * 3);
       }
     }
+    if (this.blastQ.length) this.blastHits();
     for (let i = this.pending.length - 1; i >= 0; i--) {
       if (t >= this.pending[i].at) { const p = this.pending[i]; this.pending.splice(i, 1); this.strike(p); }
     }
@@ -479,6 +530,7 @@ export class CombatSystem {
   /** Everything back to normal (setting off, leaving the street…): ragdolls stand up at once, minions vanish. */
   reset() {
     this.cancel();
+    this.blastQ.length = 0; this.bigUntil = -Infinity;
     for (const r of this.ragdolls.values()) r.finish();
     this.ragdolls.clear();
     this.zombies.clear();

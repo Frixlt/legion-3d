@@ -84,28 +84,40 @@ export class Npc {
   private speed = 0;
   /** Busy with a task (the smith at a real enchant run): keeps its own facing, no idle emotes or idle lines. */
   busy = false;
+  /**
+   * Where the NPC stands (room metres, feet). The avatar root sits directly at this point in room space (root is an
+   * identity group), so src/combat can drive it as a ragdoll in room coordinates; update() puts it back here every
+   * frame (combat poses the ragdoll after the room update).
+   */
+  readonly home = new THREE.Vector3();
+  private bubbleY = 1.6;
   constructor(readonly def: NpcDef, styleId: string, private heroName: () => string) {
     this.app = appearanceFrom('npc-' + def.seed, { name: def.name, look: def.look || {}, gear: def.gear || {} }, styleId);
     this.av = kit().create(this.app);
     this.face = def.face;
     this.root.name = 'room:npc:' + def.seed;
-    this.root.position.set(def.x, def.y || 0, def.z);
+    this.home.set(def.x, def.y || 0, def.z);
     if (def.scale) this.av.root.scale.setScalar(def.scale);
+    this.av.root.position.copy(this.home);
     this.av.root.rotation.y = def.face;
     this.root.add(this.av.root);
-    this.bubble.sprite.position.set(0, (this.av.headTop || 1.4) * (def.scale || 1) + 0.25, 0);
+    this.bubbleY = (this.av.headTop || 1.4) * (def.scale || 1) + 0.25;
+    this.bubble.sprite.position.set(this.home.x, this.home.y + this.bubbleY, this.home.z);
     this.root.add(this.bubble.sprite);
     this.nextEmote = def.emote ? 2 + Math.random() * def.emote.every : Infinity;
   }
   say(text: string, t: number, ms?: number): void { this.bubble.say(text.replace(/\{n\}/g, this.heroName()), t, ms); }
   /** Per frame: turn towards the player when near; greet once; idle lines; emotes. No allocations. */
   update(dt: number, t: number, px: number, pz: number): void {
-    const dx = px - this.root.position.x, dz = pz - this.root.position.z, d2 = dx * dx + dz * dz;
+    const dx = px - this.home.x, dz = pz - this.home.z, d2 = dx * dx + dz * dz;
     let target = this.def.face;
     if (d2 < 36 && !this.busy) target = Math.atan2(-dx, -dz);   // face convention: 0 looks to −Z
     let da = target - this.face; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
     this.face += da * Math.min(1, dt * 3);
-    this.av.root.rotation.y = this.face;
+    // back on its spot, upright (a knocked-over NPC is re-posed by src/combat after this update)
+    this.av.root.position.copy(this.home);
+    this.av.root.rotation.set(0, this.face, 0);
+    this.bubble.sprite.position.set(this.home.x, this.home.y + this.bubbleY, this.home.z);
     if (!this.greeted && d2 < 49 && this.def.hello && this.def.hello.length) {
       this.greeted = true; this.say(this.def.hello[Math.floor(Math.random() * this.def.hello.length)], t); this.av.play('wave');
       this.nextLine = t + 14 + Math.random() * 8;
@@ -119,6 +131,8 @@ export class Npc {
     this.bubble.update(dt, t);
   }
   /** World position of the head (for hit boxes). */
-  headPos(out = _p): THREE.Vector3 { return out.set(this.root.position.x, this.root.position.y + (this.av.headTop || 1.3) * 0.6, this.root.position.z); }
+  headPos(out = _p): THREE.Vector3 { return out.set(this.home.x, this.home.y + (this.av.headTop || 1.3) * 0.6, this.home.z); }
+  /** Keep the speech bubble over the head while the body is somewhere else (knocked over: head point in room metres). */
+  follow(x: number, y: number, z: number): void { this.bubble.sprite.position.set(x, y + 0.3, z); }
   dispose(): void { this.av.dispose(); this.bubble.dispose(); }
 }

@@ -16,6 +16,8 @@ import { separateBoxes } from './hits';
 import { moneyText } from '../../ui/money';
 import { coinStyle } from '../../ui/data';
 import { hideOutline, showOutline } from '../../engine/outline';
+import type { Avatar } from '../../contracts/modules';
+import type { RoomCombat, RoomFighter, RoomSpace } from '../../combat/room';
 
 /** What a room scene builder needs. Built from a RoomContext (envFromCtx) or by the dev page. */
 export interface RoomEnv {
@@ -91,6 +93,9 @@ export class RoomBase {
    */
   readonly figures: { name: string; x: number; z: number; face: number }[] = [];
   readonly goods: Good[] = [];
+  /** Figures src/combat may knock over (NPCs, tent mannequins): see src/combat/room.ts. */
+  readonly fighters: RoomFighter[] = [];
+  private afterFns: ((dt: number, t: number) => void)[] = [];
   readonly inters: Interactable[] = [];
   card: BuyCard | null = null;
   tags: TagAtlas | null = null;
@@ -127,7 +132,19 @@ export class RoomBase {
     this.npcs.push(n); this.root.add(n.root);
     this.figures.push({ name: def.name, x: def.x, z: def.z, face: def.face });
     this.kit.solid(def.x - 0.35, def.x + 0.35, def.z - 0.3, def.z + 0.3, Infinity, false);
+    this.fighters.push({
+      id: 'room:npc:' + def.seed + ':' + this.fighters.length, av: n.av, kind: 'npc', home: n.home,
+      say: (text, t) => n.say(text, t, 2600), follow: (x, y, z) => n.follow(x, y, z),
+    });
     return n;
+  }
+  /**
+   * A standing figure that is not an Npc (tent mannequin) and may be knocked over in a fight: its avatar root must be
+   * a direct child of the room root at (x, y, z). It pops back onto this spot after getting up.
+   */
+  combatFigure(av: Avatar, x: number, y: number, z: number, name = 'figure'): void {
+    const home = { x, y, z };
+    this.fighters.push({ id: 'room:fig:' + name + ':' + this.fighters.length, av, kind: 'mannequin', home });
   }
   /** Interactable registered with the game's interaction system (removed on dispose). */
   interact(i: Interactable): Interactable {
@@ -358,8 +375,44 @@ export class RoomBase {
           const id = self.card.boundTo; for (const x of self.goods) if (x.it === id) { g = x; break; }
         }
         self.setHot(g);
+        // fights (src/combat): ragdolls are posed after the room animated its figures
+        for (let i = 0; i < self.afterFns.length; i++) self.afterFns[i](dt, t);
       },
       dispose() { self.dispose(); },
+      combat: {
+        fighters(fn: (f: RoomFighter) => void) { for (let i = 0; i < self.fighters.length; i++) fn(self.fighters[i]); },
+        afterUpdate(fn: (dt: number, t: number) => void) {
+          self.afterFns.push(fn);
+          return () => { const k = self.afterFns.indexOf(fn); if (k >= 0) self.afterFns.splice(k, 1); };
+        },
+        ceiling: K.shellH || 6,
+        space: self.combatSpace(),
+      } satisfies RoomCombat,
+    } as RoomScene;
+  }
+
+  /**
+   * The room as fights see it (src/combat/room.ts RoomCombat.space): the kit's floor and walls, minus the solids a
+   * fighter stands in (its own NPC block, a mannequin's booth) — a body that starts inside a solid would slide through
+   * it and out of the room. Decided lazily (fighters are all registered once the scene is finished).
+   */
+  private combatSpace(): RoomSpace {
+    const K = this.kit;
+    let solids: { x0: number; x1: number; z0: number; z1: number; top: number }[] | null = null;
+    const list = () => solids || (solids = K.solids.filter((s) => !this.fighters.some((f) => f.home && f.home.x >= s.x0 && f.home.x <= s.x1 && f.home.z >= s.z0 && f.home.z <= s.z1)));
+    return {
+      free: (x, z) => K.free(x, z),
+      groundAt: (x, z) => K.groundAt(x, z),
+      solidTop: (x, z) => {
+        const B = K.bounds, C = K.circle;
+        let inExtra = false;
+        for (const e of K.extra) if (x >= e.x0 && x <= e.x1 && z >= e.z0 && z <= e.z1) { inExtra = true; break; }
+        if (!inExtra && (C ? (x - C.x) * (x - C.x) + (z - C.z) * (z - C.z) > C.r * C.r : x < B.x0 || x > B.x1 || z < B.z0 || z > B.z1)) return Infinity;
+        let top = -Infinity;
+        const S = list();
+        for (let i = 0; i < S.length; i++) { const s = S[i]; if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1 && s.top > top) top = s.top; }
+        return top;
+      },
     };
   }
 
@@ -371,6 +424,7 @@ export class RoomBase {
     if (this.card) { this.card.dispose(); this.card = null; }
     for (const f of this.disposers) { try { f(); } catch { /* ignore */ } }
     this.disposers.length = 0;
+    this.afterFns.length = 0;
     for (const n of this.npcs) n.dispose();
     this.kit.dispose();
     this.root.removeFromParent();

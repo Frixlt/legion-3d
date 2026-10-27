@@ -80,6 +80,40 @@ const TAB_EMPTY: Record<ChatTab, string> = {
 };
 const TAB_PH: Record<ChatTab, string> = { g: 'Написать в чат… (Enter)', tr: 'Куплю / продам / меняю…', dm: 'Лично…', ev: '' };
 
+/* ================================================================ local chat commands (never sent) */
+
+/**
+ * Local commands typed into any chat field we control (the docked site chat, the fallback panel, the «⛏ Шахта» tab):
+ * a matching line is swallowed — the field is cleared, the handler runs, NOTHING reaches the site. Used for easter eggs
+ * («!идея бум», src/features/boom.ts): «!идея …» is a real stream-bot command, sending it would spam the streamer.
+ */
+const COMMANDS: { re: RegExp; run: (text: string) => void }[] = [];
+export function registerChatCommand(re: RegExp, run: (text: string) => void): () => void {
+  const c = { re, run }; COMMANDS.push(c);
+  return () => { const i = COMMANDS.indexOf(c); if (i >= 0) COMMANDS.splice(i, 1); };
+}
+/** The local command a typed line is, or null. */
+export function chatCommand(text: string): ((text: string) => void) | null {
+  const t = String(text ?? '').trim();
+  if (!t) return null;
+  for (const c of COMMANDS) { c.re.lastIndex = 0; if (c.re.test(t)) return c.run; }
+  return null;
+}
+/** Run the local command of `text` if it is one (true = swallowed: the caller must not send it). */
+export function runChatCommand(text: string): boolean {
+  const fn = chatCommand(text);
+  if (!fn) return false;
+  try { fn(String(text).trim()); } catch (e) { console.error('[l3d] chat command', e); }
+  return true;
+}
+/** A field with a local command in it: clear it and run the command (true = swallowed). */
+function swallowField(inp: HTMLInputElement | null | undefined): boolean {
+  if (!inp || !chatCommand(inp.value)) return false;
+  const t = inp.value; inp.value = '';
+  try { inp.dispatchEvent(new Event('input', { bubbles: true })); } catch { /* */ }
+  return runChatCommand(t);
+}
+
 /* ================================================================ mine chat tab (⛏ Шахта) */
 
 /** One line of the mine room's chat (the game's `mchat` format). */
@@ -132,6 +166,7 @@ export class MineChatTab {
   /** Send what the player typed (blank → null, nothing posted). */
   async send(text: string): Promise<{ ok: boolean; error?: string } | null> {
     const t = String(text || '').trim(); if (!t) return null;
+    if (runChatCommand(t)) return { ok: true };   // a local command: never posted
     const r = await this.src.say(t) as { ok?: boolean; error?: string } | null | undefined;
     return r && r.ok === false ? { ok: false, error: r.error } : { ok: true };
   }
@@ -349,6 +384,7 @@ export class Chat {
     const t = this.input.value.trim();
     if (!t) { this.input.blur(); return; }
     if (this.sending) return;
+    if (runChatCommand(t)) { this.input.value = ''; this.cnt.textContent = ''; this.input.blur(); return; }   // local command: never sent
     if (this.mineSel) { await this.mineSend(this.input, () => { this.cnt.textContent = ''; this.input.blur(); }); return; }
     if (this.tab === 'dm' && !this.peer) { this.c.toast('Кому? Нажми «✉» у ника в ленте', true); return; }
     this.sending = true;
@@ -481,6 +517,26 @@ export class Chat {
         this.watchSend(inp);   // the site sends; leave the field once it is cleared (sent / command done)
       }
     };
+    // local chat commands: window capture runs before any handler of the site's chat (Enter, the send button, submit)
+    const fieldOf = (e: Event): HTMLInputElement | null => {
+      const t = (typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target) as HTMLElement | null;
+      if (!t || !b.contains(t)) return null;
+      const f = (t.closest?.('.cy-chat-f') as HTMLElement | null);
+      return f ? f.querySelector('input') : null;
+    };
+    const onCmd = (e: Event) => {
+      if (e.type === 'keydown') {
+        const k = e as KeyboardEvent;
+        if ((k.key !== 'Enter' && k.code !== 'NumpadEnter') || k.isComposing || k.shiftKey) return;
+      } else if (e.type === 'click' && !((e.target as HTMLElement | null)?.closest?.('.cy-chat-f button'))) return;
+      const inp = fieldOf(e);
+      if (!inp || !swallowField(inp)) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      inp.blur();
+    };
+    window.addEventListener('keydown', onCmd, true);
+    window.addEventListener('submit', onCmd, true);
+    window.addEventListener('click', onCmd, true);
     const onLeave = () => { if (this.idle) { const l = this.curList(); if (l) l.scrollTop = l.scrollHeight; } };
     const onLock = () => { if (document.pointerLockElement && this.dockFocus) (document.activeElement as HTMLElement | null)?.blur?.(); };
     b.addEventListener('focusin', onIn);
@@ -497,6 +553,7 @@ export class Chat {
     this.lastAct = Date.now();
     this.boxOff = () => {
       b.removeEventListener('focusin', onIn); b.removeEventListener('focusout', onOut); b.removeEventListener('keydown', onKey, true); b.removeEventListener('mouseleave', onLeave);
+      window.removeEventListener('keydown', onCmd, true); window.removeEventListener('submit', onCmd, true); window.removeEventListener('click', onCmd, true);
       document.removeEventListener('pointerlockchange', onLock);
       mo?.disconnect();
       this.dockMineDetach();
