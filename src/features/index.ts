@@ -21,9 +21,15 @@ import classic from './classic';
 import quest from './quest';
 import debug from './debug';
 import itemModels from './item-models';
+import sound from './sound';
+import photo from './photo';
+import whatsnew from './whatsnew';
+import seasonal from './seasonal';
+import combat from './combat';
 
 export const FEATURES: (Feature | CoreFeature)[] = [
-  settings, itemModels, menus, camera, crowd, labels, doors, controls, rooms, contentRooms, overlay, classic, quest, debug,
+  settings, itemModels, menus, camera, crowd, labels, doors, controls, rooms, contentRooms, overlay, classic, quest, photo, debug, whatsnew, seasonal, sound,
+  combat,
 ];
 
 /** Run every feature's setup in order. A failing feature is logged and skipped (the game still starts). */

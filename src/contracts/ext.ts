@@ -43,10 +43,12 @@ export interface Interactable {
   /** Optional secondary action (RMB / F), e.g. «Осмотреть». */
   alt?: { label: string; use(): void };
   enabled?: () => boolean;
-  /** Draw your own highlight while targeted (then the generic shell is skipped). Exactly one target is highlighted at a time. */
+  /** Draw your own highlight while targeted (then the generic silhouette outline is skipped). Exactly one target is highlighted at a time. */
   highlight?(on: boolean): void;
-  /** Region to frame when using the generic highlight on a Box3 volume (e.g. only the doorway). */
+  /** Region of the fitted outline proxy for Box3 / invisible hit volumes (e.g. only the doorway). */
   highlightBox?: THREE.Box3;
+  /** Meshes to outline instead of the hit object (e.g. the real door leaf cut out of merged city geometry). */
+  outline?: THREE.Object3D | THREE.Object3D[] | (() => THREE.Object3D | THREE.Object3D[] | null);
 }
 export interface InteractSystem {
   add(i: Interactable): Unsub;

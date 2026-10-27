@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as THREE from 'three';
+import { outlineOwner, outlineSources } from '../src/engine/outline';
 import meJson from './fixtures/me.json';
 import stockJson from './fixtures/stock.json';
 import { overlaps } from '../src/rooms/common/hits';
@@ -122,14 +123,19 @@ describe('purchase safety in every shop', () => {
       for (const g of goods.slice(0, 4)) {   // (the tent with the magic shop open has looks only: no goods)
         setTarget(g); room.update(0.016, 1, cam);
         expect(base.hot && base.hot.inter).toBe(g);
-        const hi = room.root.getObjectByName('room:highlight')!;
-        expect(hi.visible).toBe(base.hot.range.count > 0);
-        const shell = room.root.getObjectByName('room:highlight:shell') as THREE.Mesh;
-        expect(shell.geometry.drawRange.start).toBe(base.hot.range.start);
-        expect(shell.geometry.drawRange.count).toBe(base.hot.range.count);
+        // the outline: exactly one carrier, over exactly this good's vertex range (never the whole goods mesh)
+        const hi = room.root.getObjectByName('room:highlight') as THREE.Mesh;
+        if (base.hot.range.count > 0) {
+          expect(outlineSources()).toEqual([hi]);
+          expect(outlineOwner()).toBe(base);
+          expect(hi.geometry.drawRange.start).toBe(base.hot.range.start);
+          expect(hi.geometry.drawRange.count).toBe(base.hot.range.count);
+        }
+        expect(room.root.getObjectByName('room:highlight:shell')).toBeUndefined();
       }
       setTarget(null); room.update(0.016, 1.1, cam);
       expect(base.hot).toBe(null);
+      expect(outlineSources().length).toBe(0);
       if (booths.length) { setTarget(booths[0]); room.update(0.016, 1.2, cam); expect(base.hot).toBe(null); setTarget(null); }
       // the card stays bound to the good it was opened for while the aim moves on
       const buyable = goods.filter((g) => g.label.startsWith('Купить'));

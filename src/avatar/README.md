@@ -41,3 +41,22 @@ Dev page: `npm run build`, open `dist-dev/avatar.html` (`?style=cats|monkeys|leg
 More modes: `?acc=1` shapes × accessory sets grid (`&sets=glasses;shades;cape&shapes=bean,ball&eyes=big&gear=1`), `?me=1` the fixture hero
 (`&strip=w,s&meacc=glasses`), `?items=1` every item model on a stand (`?items=weapon,hat&rar=epic&ring=1&cols=8`), `?vmfull=1&vmi=me|<n>` full-screen
 view-model (`&vmw=<weapon>|none&vms=<shield>|none&vma=<armour>&vmblock=1&vmwalk=0..1.6&vmfov=75`), `?cp=x,y,z&ct=x,y,z` camera. Keys: J — jump + land.
+
+Combat hooks (used by `src/combat`, «Драки с котиками»; duck-typed, not part of the Avatar contract):
+- bones: `B.wrist` (index 10, child of `armR` at the paw) carries the held weapon, so it can turn on its own (wrist snap of the swings,
+  the TP bow draw); `B.bowString` (index 11, child of the wrist at the string centre) carries the bow's straight string, collapsed while
+  the drawn-string overlay is shown. Rotation 0 / scale 1 = the old pose.
+- `attacks.ts` — TP attack tracks per weapon family (slash / smash / thrust / cast / flick / slap / bonk): 12 values per key (both arms,
+  body yaw/lean/dy/dz, wrist x/z) + a per-segment ease (in for strikes, out for wind-ups / follow-throughs, back for the settle).
+  Every melee track: wind-up → a held anticipation (80–120 ms, crouched: body dy < 0 squashes, > 0 stretches) → fast strike → contact
+  (`TP_CONTACT`, the wrist snaps through) → follow-through → settle. The body dz < 0 splits the legs into a lunge stance; a smash
+  hops (dy > 0 tucks the legs) and lands with the landing squash at contact. Same timings as the FP `SWINGS` (viewmodel.ts).
+  `play('swing')` picks the track of the weapon family; the first/last keys blend from/to the walk/idle pose.
+- `AvatarCombat` (avatar.ts): `combatRig()` (bones + rest data for the ragdoll), `setDraw(k)` (bow draw: the body turns side-on, the
+  bow arm reaches out, the bow grows ×1.65 and is canted (`BOW_CANT`), `bowdraw.ts` draws the pulled string + nocked arrow (one small
+  dynamic mesh in the body bone, one draw call while drawing) and the free paw is pulled onto the nock; on release a short twang/kick),
+  `arrowTip(out)`, `bladeSeg(a, b, pivot?)` (world edge of the weapon / paw for the swing trail; model data `ModelData.blade`, from
+  `gear.ts bladeSpan`), `hitStop(sec)`, `setFlash(a)` (additive white skinned copy, created on first use), `setDizzy(on)` (face with
+  `eyes: 'dizzy'`, `mouth: 'wobble'` from face.ts).
+- view-model: `setDraw(k)` (raise to aim, nocked arrow `vm-nock`, the left paw pulls the string — `VM_TUNE.pull`), `hitStop(sec)`,
+  `swingReady`, `swingTime`, `bladeSeg(a, b)`, `arrowTip(out)`; `weaponFamily(w)` is exported.

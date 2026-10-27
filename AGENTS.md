@@ -35,6 +35,7 @@ L3D_COOKIES=cookies.txt node e2e/live.mjs   # real site (see docs/TESTING.md)
 | core: registries, drift, interact system, room manager | `src/core` | [docs/EXTENDING.md](docs/EXTENDING.md) |
 | features (camera modes, crowd, labels, doors, controls, rooms, overlays, classic, quest HUD, menus, debug) | `src/features` (`index.ts` = ordered list) | docs/EXTENDING.md |
 | rooms: 3D shops, hybrid interiors, the mine | `src/rooms/shop`, `src/rooms/hybrid`, `src/rooms/mine` | headers of their `index.ts` |
+| events | `src/events` | seasonal events (Halloween); `src/events/README.md` |
 | supported ids + site snapshot (drift) | `src/data`, `scripts/drift.mjs` (`npm run drift`) | docs/EXTENDING.md |
 | site adapter | `src/bridge`, `src/net`, `src/store` | docs/SITE-NOTES.md |
 | engine (renderer, quality, input, camera, player, crowd budget, post) | `src/engine` | header of `src/engine/index.ts` |

@@ -85,6 +85,10 @@ export class AutoGovernor {
   private winStart = 0;
   private good = 0;
   private coolUntil = 0;
+  /** Time of the last scale/level step down: no step up for SCALE_UP_HOLD s after it (avoids down/up ping-pong). */
+  private downAt = -1e9;
+  private upAt = -1e9;
+  scaleUpHold = 8;
   /** Fixed level (user choice): only the resolution scale adapts, with PRESETS[level].fixedMinScale as the floor. */
   locked = false;
   /** Thresholds in ms (exposed for tests/tuning). */
@@ -133,6 +137,9 @@ export class AutoGovernor {
         // proportional step: aim at the budget assuming cost ∝ pixels ∝ scale²
         const want = this.scale * Math.sqrt(this.fastMs / avg);
         this.scale = Math.max(minScale, Math.min(this.scale - 0.05, Math.round(want * 20) / 20));
+        // a step up that failed within 10 s: wait twice as long before probing again (8 → 16 → … 120 s)
+        if (now - this.upAt < 10) this.scaleUpHold = Math.min(120, this.scaleUpHold * 2);
+        this.downAt = now;
         return 'scale';
       }
       if (this.level > 0 && !this.locked) {
@@ -145,9 +152,10 @@ export class AutoGovernor {
     }
     if (avg < this.fastMs) {
       this.good++;
-      if (this.scale < 1 && this.good >= 2) {
+      if (this.scale < 1 && this.good >= 2 && now - this.downAt >= this.scaleUpHold) {
         this.scale = Math.min(1, this.scale + 0.05);
         this.good = 0;
+        this.upAt = now;
         return 'scale';
       }
       if (!this.locked && this.scale >= 1 && this.good >= 6 && this.level < this.maxLevel && now > this.coolUntil) {

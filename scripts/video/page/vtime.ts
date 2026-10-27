@@ -27,7 +27,7 @@ export interface VTime {
   realign(): void;
 }
 
-declare global { interface Window { __vt: VTime; __VT_CFG?: { seed?: number; date0?: number } } }
+declare global { interface Window { __vt: VTime; __VT_CFG?: { seed?: number; date0?: number; audio?: boolean; lock?: boolean } } }
 
 (() => {
   const W = window as Window & typeof globalThis;
@@ -117,6 +117,33 @@ declare global { interface Window { __vt: VTime; __VT_CFG?: { seed?: number; dat
         else a.currentTime = ct;
       } catch { /* */ }
     }
+  }
+
+  /* ---- sound capture (cfg.audio): the game's AudioContext runs on the virtual clock and never plays.
+   * new AudioContext() → a never-rendered OfflineAudioContext whose currentTime is the virtual time (seconds), state
+   * 'running'; window.__VT_AUDIO_LOG collects what the SoundEngine does (src/audio/capture.ts). */
+  if (cfg.audio && typeof (W as any).OfflineAudioContext === 'function') {
+    const OAC = (W as any).OfflineAudioContext as typeof OfflineAudioContext;
+    class VtAudioContext extends OAC {
+      constructor() { super(2, 4800, 48000); }
+      get currentTime(): number { return now / 1000; }
+      get state(): AudioContextState { return 'running'; }
+      resume(): Promise<void> { return Promise.resolve(); }
+      suspend(): Promise<void> { return Promise.resolve(); }
+      close(): Promise<void> { return Promise.resolve(); }
+    }
+    (W as any).AudioContext = VtAudioContext; (W as any).webkitAudioContext = VtAudioContext;
+    (W as any).__VT_AUDIO_LOG = [];
+  }
+
+  /* ---- pointer lock (cfg.lock): headless Chrome has none; emulate it so the game plays exactly as with a grabbed
+   * mouse (crosshair, LMB attacks, no «click to return» hint). requestPointerLock locks at once (event next tick). */
+  if (cfg.lock) {
+    let lockEl: Element | null = null;
+    const fire = () => W.setTimeout(() => document.dispatchEvent(new Event('pointerlockchange')), 0);
+    Object.defineProperty(Document.prototype, 'pointerLockElement', { configurable: true, get: () => lockEl });
+    (Element.prototype as any).requestPointerLock = function (this: Element) { if (lockEl !== this) { lockEl = this; fire(); } return Promise.resolve(); };
+    (Document.prototype as any).exitPointerLock = function () { if (lockEl) { lockEl = null; fire(); } };
   }
 
   const vt: VTime = {

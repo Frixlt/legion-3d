@@ -11,7 +11,11 @@ const WOOD = '#8a5a2b', DWOOD = '#5a3a1c', GOLD = '#e8b923', BONE = '#ebe2c9';
 const accent = (r?: string) => (r && r !== 'common' ? RARITY_COLOR[r] : null);
 
 /** Add weapon parts (in weapon space transformed by `m`) to `p`. */
-export function addWeapon(p: Parts, kind: string, rar: string | undefined, m: THREE.Matrix4, lowDetail = false): void {
+/** Bow string ends and centre in WEAPON space (the bow as built by addWeapon), for the drawn-string overlay. */
+export const BOW_STRING = { top: [0, 0.08 + Math.sin(1.1) * 0.32, -Math.cos(1.1) * 0.12 + 0.05], bottom: [0, 0.08 - Math.sin(1.1) * 0.32, -Math.cos(1.1) * 0.12 + 0.05], grip: [0, 0.08, -0.07] } as const;
+
+/** `stringBone`: skin the bow string to this bone (the TP body hides it while the drawn string is shown). */
+export function addWeapon(p: Parts, kind: string, rar: string | undefined, m: THREE.Matrix4, lowDetail = false, stringBone?: number): void {
   const metal = METAL[rar || 'common'] || METAL.common, acc = accent(rar);
   const M = (x: THREE.Matrix4) => new THREE.Matrix4().multiplyMatrices(m, x);
   const seg = lowDetail ? 6 : 10;
@@ -84,7 +88,7 @@ export function addWeapon(p: Parts, kind: string, rar: string | undefined, m: TH
       for (let i = 0; i <= 10; i++) { const a = -1.1 + (2.2 * i) / 10; arc.push([0, Math.sin(a) * 0.32 + 0.08, -Math.cos(a) * 0.12 + 0.05]); }
       p.add(tube(arc, 0.017, lowDetail ? 10 : 18, 5), '#c48a4a', m);   // wood always (pale limbs vanished against the sky); rarity shows in the gem + tips
       if (acc) for (const sy of [-1, 1]) p.add(sphere(0.014, 6, 4), acc, M(T(0, Math.sin(1.1 * sy) * 0.32 + 0.08, -Math.cos(1.1) * 0.12 + 0.05)));
-      p.add(cyl(0.004, 0.004, Math.sin(1.1) * 0.64, 4), '#ff5a7a', M(T(0, 0.08, Math.cos(1.1) * -0.12 + 0.05)));
+      p.add(cyl(0.004, 0.004, Math.sin(1.1) * 0.64, 4), '#ff5a7a', M(T(0, 0.08, Math.cos(1.1) * -0.12 + 0.05)), stringBone);
       p.add(cyl(0.022, 0.022, 0.08, seg), '#7a4a2a', M(T(0, 0.08, -0.07)));
       gem(0.08, -0.095, 0.014); break;
     }
@@ -141,6 +145,17 @@ export function addWeapon(p: Parts, kind: string, rar: string | undefined, m: TH
     }
   }
 }
+
+/**
+ * The striking part of a weapon in WEAPON space (as built by addWeapon: grip at the origin, along +Y): [y0, y1] of
+ * the blade / head, for the swing trail (src/combat trail.ts). null = nothing to trail (bow, tome, censer).
+ */
+const BLADE: Record<string, [number, number]> = {
+  sword: [0.1, 0.42], gladius: [0.06, 0.34], dagger: [0.04, 0.2], kris: [0.04, 0.3], axe: [0.2, 0.42], club: [0.14, 0.4],
+  mace: [0.26, 0.44], hammer: [0.26, 0.42], holymace: [0.3, 0.5], spear: [0.36, 0.72], pitchfork: [0.36, 0.68],
+  staff: [0.4, 0.64], crook: [0.36, 0.58], skullstaff: [0.4, 0.7],
+};
+export function bladeSpan(kind: string): [number, number] | null { return BLADE[kind] ?? (kind === 'bow' || kind === 'grimoire' || kind === 'censer' ? null : BLADE.sword); }
 
 const HOLD_EDGE_FWD = new Set(['sword', 'gladius', 'dagger', 'kris', 'axe', 'hammer', 'spear', 'crook']);
 /**

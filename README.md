@@ -105,6 +105,7 @@ node scripts/shot.mjs dist-dev/world.html shot.png   # скриншот демо
 
 У расширения нет разрешений Chrome. Оно работает только на `play.multidonate.ru/c/*`, ничего не отправляет
 третьим сторонам и не хранит ничего, кроме настроек в `localStorage`.
+Подробно: [Политика конфиденциальности](docs/PRIVACY.md).
 
 ## Лицензия
 

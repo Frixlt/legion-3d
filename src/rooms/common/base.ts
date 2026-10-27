@@ -15,6 +15,7 @@ import { offerOf, topIdsOf, LOCK_T, type CityStock, type PriceEnv, type StockIte
 import { separateBoxes } from './hits';
 import { moneyText } from '../../ui/money';
 import { coinStyle } from '../../ui/data';
+import { hideOutline, showOutline } from '../../engine/outline';
 
 /** What a room scene builder needs. Built from a RoomContext (envFromCtx) or by the dev page. */
 export interface RoomEnv {
@@ -61,32 +62,10 @@ export interface Good {
   /** Model bounds and the (non-overlapping) hit volume. */
   box: THREE.Box3; hit: THREE.Box3;
   tag: number;
-  /** Vertex range of this good in the merged lit goods geometry (highlight shell). */
+  /** Vertex range of this good in the merged lit goods geometry (its outline = exactly these vertices). */
   range: { start: number; count: number };
   inter: Interactable;
 }
-
-/** Golden inverted-hull shell around the aimed good; uTime drives a soft pulse. */
-function hiShellMat(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uCol: { value: new THREE.Color('#ffd25a') } },
-    vertexShader: `uniform float uTime; void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); float w = 0.012 * clamp(-mv.z * 0.35, 1.0, 3.0) * (1.0 + 0.25 * sin(uTime * 6.0));
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position + normalize(normal) * w, 1.0); }`,
-    fragmentShader: `uniform vec3 uCol; uniform float uTime; void main(){ gl_FragColor = vec4(uCol * (1.6 + 0.4 * sin(uTime * 6.0)), 1.0); }`,
-    side: THREE.BackSide, depthWrite: false, fog: false,
-  });
-}
-/** Additive rim light over the aimed good's own surface (fresnel), pulsing. */
-function hiRimMat(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uCol: { value: new THREE.Color('#ffcf6a') } },
-    vertexShader: `varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `uniform vec3 uCol; uniform float uTime; varying vec3 vN; varying vec3 vV; void main(){ float f = pow(1.0 - max(dot(normalize(vN), normalize(vV)), 0.0), 2.0);
-      gl_FragColor = vec4(uCol * (0.18 + f * 0.9) * (0.75 + 0.25 * sin(uTime * 6.0)), 1.0); }`,
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthFunc: THREE.LessEqualDepth, fog: false,
-  });
-}
-
 
 const DOOR_OPEN_S = 0.55, DOOR_CLOSE_S = 0.7;
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -123,7 +102,8 @@ export class RoomBase {
   private extraTags: { spec: TagSpec; pos: [number, number, number, number, number] }[] = [];
   private pending: Placed[] = [];
   private pendingGoods: { it: StockItem; b: string; tag: [number, number, number, number, number] | null }[] = [];
-  private highlight: THREE.Group | null = null;
+  /** Invisible carrier of the aimed good's outline: the lit goods geometry with the good's draw range. */
+  private highlight: THREE.Mesh | null = null;
   private hiView: THREE.BufferGeometry | null = null;
   /** The good currently highlighted (= the interaction target), or null. */
   hot: Good | null = null;
@@ -212,6 +192,9 @@ export class RoomBase {
     if (this.leaving >= 0) return;
     this.leaving = 0;
     fadeFlash(DOOR_OPEN_S);
+    // the door creaks open now, while it visibly swings (the sound feature skips its own door.open on this exit)
+    try { window.dispatchEvent(new CustomEvent('l3d:sfx', { detail: { id: 'door.open' } })); } catch { /* no sound */ }
+    (window as unknown as { __l3dDoorOpened?: number }).__l3dDoorOpened = performance.now();
   }
   /** Queue a good: model placed with its pivot at (x,y,z), fitted to `fit` m; tag at tagPos [x,y,z,ry,rx]. */
   good(it: StockItem, b: string, p: Omit<Placed, 'obj'>, tag: [number, number, number, number, number] | null): void {
@@ -294,22 +277,22 @@ export class RoomBase {
           id: `room:good:${pg.b}:${pg.it.id}:${i}`, label: this.goodLabel(pg.it, pg.b), icon: '🛒', hit, reach: 4.5, proximity: false,
           use: () => { const of = offerOf(g.it, g.b, this.priceEnv()); this.openGood(g, (of.kind === 'coins' || of.kind === 'mat') && !of.why); },
           alt: { label: 'Осмотреть', use: () => this.openGood(g, false) },
-        });
+          // the room outlines the good itself (setHot: follows the aim, stays on the good of an open card)
+          highlight: () => { /* drawn by setHot */ },
+        } as Interactable);
         this.goods.push(g);
       });
       this.pending = []; this.pendingGoods = [];
       this.unsubs.push(this.env.store.on('hero', () => this.refreshTags()));
-      // highlight of the ONE aimed good: a golden shell (inverted hull, pulsing) + rim light over exactly its vertices
+      // outline of the ONE aimed good (src/engine/outline.ts): an invisible carrier mesh over exactly its vertices
       if (lit) {
         const view = new THREE.BufferGeometry();
-        for (const k of ['position', 'normal', 'color']) view.setAttribute(k, lit.getAttribute(k));
+        for (const k of ['position', 'normal']) view.setAttribute(k, lit.getAttribute(k));
         view.setDrawRange(0, 0);
-        const shell = new THREE.Mesh(view, hiShellMat()), rim = new THREE.Mesh(view, hiRimMat());
-        shell.frustumCulled = rim.frustumCulled = false; shell.renderOrder = 6; rim.renderOrder = 7;
-        shell.name = 'room:highlight:shell'; rim.name = 'room:highlight:rim';
-        const hg = new THREE.Group(); hg.name = 'room:highlight'; hg.add(shell, rim); hg.visible = false;
-        this.highlight = hg; this.hiView = view;
-        this.root.add(hg); K.owned.push(view, shell.material as THREE.Material, rim.material as THREE.Material);
+        const carrier = new THREE.Mesh(view, new THREE.MeshBasicMaterial({ visible: false }));
+        carrier.name = 'room:highlight'; carrier.frustumCulled = false; carrier.raycast = () => { /* never hit */ };
+        this.highlight = carrier; this.hiView = view;
+        this.root.add(carrier); K.owned.push(view, carrier.material as THREE.Material);
       }
     }
     if (this.tags) { const m = this.tags.build(); this.root.add(m); K.owned.push(this.tags); }
@@ -332,8 +315,13 @@ export class RoomBase {
       if (g && g.tag >= 0) this.tags.draw(g.tag, this.tagSpec(g.it, g.b, true));
     }
     if (this.highlight && this.hiView) {
-      if (g && g.range.count > 0) { this.hiView.setDrawRange(g.range.start, g.range.count); this.highlight.visible = true; }
-      else { this.hiView.setDrawRange(0, 0); this.highlight.visible = false; }
+      if (g && g.range.count > 0) {
+        this.hiView.setDrawRange(g.range.start, g.range.count);
+        // bounds of this good only (the outline's screen rect), from its model box in room space
+        const bb = (this.hiView.boundingBox ||= new THREE.Box3()); bb.copy(g.box);
+        const bs = (this.hiView.boundingSphere ||= new THREE.Sphere()); bb.getBoundingSphere(bs);
+        showOutline(this, this.highlight);
+      } else { this.hiView.setDrawRange(0, 0); hideOutline(this); }
     }
   }
 
@@ -370,14 +358,13 @@ export class RoomBase {
           const id = self.card.boundTo; for (const x of self.goods) if (x.it === id) { g = x; break; }
         }
         self.setHot(g);
-        const h = self.highlight;
-        if (h && h.visible) for (const m of h.children) ((m as THREE.Mesh).material as THREE.ShaderMaterial).uniforms.uTime.value = t;
       },
       dispose() { self.dispose(); },
     };
   }
 
   dispose(): void {
+    hideOutline(this);
     this.setFog(false);
     for (const u of this.unsubs) { try { u(); } catch { /* ignore */ } }
     this.unsubs.length = 0;

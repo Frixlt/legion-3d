@@ -23,6 +23,7 @@ import { RECOMMENDED_NEAR, createAvatarKit, appearanceFrom } from '../src/avatar
 import me from '../test/fixtures/me.json';
 import stockJson from '../test/fixtures/stock.json';
 import map from '../test/fixtures/fair-map.json';
+import { outlineFrame } from '../src/engine/outline';
 
 const q = new URLSearchParams(location.search);
 const roomId = q.get('room') || 'forge';
@@ -215,6 +216,7 @@ function frame() {
   room.update(dt, t, camera);
   prompt.textContent = target ? `[E] ${target.label}${target.alt ? `   ·   [F]/[ПКМ] ${target.alt.label}` : ''}` : '';
   prompt.style.opacity = target && gameplay ? '1' : '0';
+  outlineFrame(renderer, scene, camera, t, false);   // target outline (hull: this page has no post chain)
   renderer.render(scene, camera);
   frames++; fpsT += rdt; if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
   if (q.get('stats') === '1') hud.textContent = `${roomId}  build ${buildMs.toFixed(0)} ms  fps ${fps.toFixed(0)}\ncalls ${renderer.info.render.calls}  tris ${renderer.info.render.triangles}\nlights ${countLights()}  goods ${goods().length}  pos ${player.x.toFixed(2)},${player.z.toFixed(2)}  arm ${armNow.toFixed(2)}`;

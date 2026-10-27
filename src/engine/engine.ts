@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import type { QualityLevel, Unsub } from '../contracts';
 import type { CreateEngine, Engine } from '../contracts/modules';
 import { PostChain, TONE_EXPOSURE, type PostOptions } from './post';
+import { outlineCalls, outlineFrame } from './outline';
 import { AutoGovernor, PRESETS, guessLevel, levelCapForGpu, loadSetting, saveSetting, type QualitySetting } from './quality';
 
 /** WebGL 2 could not be created with any context attributes (GPU blocked, driver failure, hardware acceleration off). */
@@ -159,11 +160,20 @@ export const createEngine: CreateEngine = (opts) => {
   }
 
   let w = 1, h = 1;
+  let sizeKey = '';
+  /** Deferred resize work, applied at the start of the next frame (see frame()). */
+  let pendingRes: 'scale' | 'level' | null = null;
+  let pendingSize = false;
   function applySize(): void {
     w = Math.max(1, host.clientWidth || window.innerWidth);
     h = Math.max(1, host.clientHeight || window.innerHeight);
     const dpr = Math.min(window.devicePixelRatio || 1, PRESETS[level].pixelRatioCap);
-    renderer.setPixelRatio(Math.max(0.25, dpr * scale));
+    const pr = Math.max(0.25, dpr * scale);
+    // setting canvas.width/height clears the drawing buffer even to the same value: skip no-op resizes (no blink)
+    const key = w + 'x' + h + '@' + pr.toFixed(4) + (post && postOn() ? 'p' : '');
+    if (key === sizeKey) return;
+    sizeKey = key;
+    renderer.setPixelRatio(pr);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
@@ -206,9 +216,10 @@ export const createEngine: CreateEngine = (opts) => {
   applyLevel(-1);
 
   /* ---------------------------------------------------------------- resize */
-  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => applySize()) : null;
+  // resizes are applied at the start of the next frame, before its render (never between render and paint)
+  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { pendingSize = true; }) : null;
   ro?.observe(host);
-  const onResize = () => applySize();
+  const onResize = () => { pendingSize = true; };
   window.addEventListener('resize', onResize);
 
   /* ---------------------------------------------------------------- loop */
@@ -239,6 +250,8 @@ export const createEngine: CreateEngine = (opts) => {
       msS += (rawMs - msS) * k;
       fpsS = 1000 / msS;
     }
+    if (pendingSize) { pendingSize = false; applySize(); }
+    if (pendingRes) applyPendingRes();
     const c0 = performance.now();
     for (let i = 0; i < frameFns.length; i++) {
       try { frameFns[i](dt, t); } catch (e) { console.error('[l3d] frame callback failed', e); }
@@ -247,7 +260,9 @@ export const createEngine: CreateEngine = (opts) => {
     if (shadowSeen !== scene.children.length) { shadowSeen = scene.children.length; if (renderer.shadowMap.enabled) clampShadows(); }
     const c1 = performance.now();
     renderer.info.reset();
-    if (post && postOn()) post.render(dt); else renderer.render(scene, camera);
+    const usePost = !!post && postOn();
+    outlineFrame(renderer, scene, camera, t, usePost);   // target outline: mask pass (post) or hull meshes (q0–1)
+    if (usePost) post!.render(dt); else renderer.render(scene, camera);
     const c2 = performance.now();
     cpuS += (c2 - c0 - cpuS) * 0.1;
     cbS += (c1 - c0 - cbS) * 0.1;
@@ -256,8 +271,14 @@ export const createEngine: CreateEngine = (opts) => {
     tris = renderer.info.render.triangles;
 
     // dynamic resolution in every mode; level steps only in 'auto' (gov.locked otherwise)
+    // Resizing the drawing buffer clears it: doing it here, after this frame's render, would let the browser show the
+    // cleared (black) canvas for one frame — the "blink every 5–10 s". Apply on the next frame, before its render.
     const r = gov.sample(rawMs, nowS);
-    if (r === 'scale') { scale = gov.scale; applySize(); }
+    if (r === 'level' || (r === 'scale' && pendingRes !== 'level')) pendingRes = r;
+  }
+  function applyPendingRes(): void {
+    const r = pendingRes; pendingRes = null;
+    if (r === 'scale') { if (Math.abs(gov.scale - scale) > 1e-3) { scale = gov.scale; applySize(); } }
     else if (r === 'level') { const p = level; level = gov.level; scale = gov.scale; applyLevel(p); }
   }
   function start(): void {
@@ -328,6 +349,6 @@ export const createEngine: CreateEngine = (opts) => {
   ex.onContextLost = (fn) => { lostFns.push(fn); return () => { const i = lostFns.indexOf(fn); if (i >= 0) lostFns.splice(i, 1); }; };
   Object.defineProperty(engine, 'contextLost', { get: () => lost, enumerable: true });
   // extras for the debug overlay (not in the contract)
-  (engine as Engine & { debug?: () => object }).debug = () => ({ setting, level, scale, pixelRatio: renderer.getPixelRatio(), gpuCap, cpuMs: Math.round(cpuS * 100) / 100, logicMs: Math.round(cbS * 100) / 100, submitMs: Math.round(rdS * 100) / 100, shadows: renderer.shadowMap.enabled, post: !!(post && postOn()) });
+  (engine as Engine & { debug?: () => object }).debug = () => ({ setting, level, scale, pixelRatio: renderer.getPixelRatio(), gpuCap, cpuMs: Math.round(cpuS * 100) / 100, logicMs: Math.round(cbS * 100) / 100, submitMs: Math.round(rdS * 100) / 100, shadows: renderer.shadowMap.enabled, post: !!(post && postOn()), outlineCalls: outlineCalls() });
   return engine;
 };

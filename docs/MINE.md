@@ -141,8 +141,11 @@ The site's mine must not run at the same time (one presence per tab): the room c
 - **Other miners** are avatars with helmets, pulled to the face of their stone; idle ones are spread ≥ 1.3 m off the
   player and fade near the camera. In third person, rock right in front of the camera dissolves (never the ceiling).
 - **HUD** (`hud.ts`): a compact top-right card (floor, nature, counts, «Сейчас» + progress + «Стоп», income with
-  «Скупщик», today/mastery meters, «Поручения»), collapsible (`l3d.mineHudMin`). **L** opens the journal drawer with
-  «Журнал» and «Чат шахты» tabs (chat only posts when the player sends). Esc closes cards/drawer first.
+  «Скупщик», today/mastery meters, «Поручения»), collapsible (`l3d.mineHudMin`). **L** opens the journal drawer (hero
+  stats + mine log; it points to the chat). Esc closes cards/drawer first.
+- **Mine chat:** the «⛏ Шахта» tab of the bottom-left chat dock (`src/ui/chat.ts`, `attachMineChat`, called by the room):
+  appears on entering the mine and is selected, disappears on exit (the previous tab stays as it was), unread badge on
+  the tab while another one is shown, own input «Написать в чат шахты…»; posts only when the player presses Enter / send.
 - **Lift and board** are used by aiming only (E at the spawn never leaves the mine by accident).
 - **Pickaxe:** head in the swing plane, long point forward; first person strikes point-first toward the crosshair.
 - **Offline:** `dev/game.ts` plugs `FakeMine` (fixture `test/fixtures/mine-enter.json`) so the whole-game demo opens

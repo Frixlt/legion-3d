@@ -421,6 +421,7 @@ button { font: inherit; color: inherit; }
 .p-set .pan, .p-help .pan { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(720px, 90%); max-height: 86%; }
 .setrow { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 7px 4px; border-bottom: 1px solid #ffffff0d; font: 700 14px/1.2 var(--l3d-tx); }
 .setrow small { display: block; color: var(--l3d-mute); font-weight: 600; font-size: 11.5px; margin-top: 3px; }
+.setgroup { margin: 14px 4px 2px; font: 800 11px/1 var(--l3d-tx); letter-spacing: .12em; text-transform: uppercase; color: var(--l3d-gold, #f4c25b); }
 .seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #00000040; box-shadow: inset 0 0 0 1px #ffffff12; }
 .seg button { border: 0; background: transparent; cursor: pointer; height: 30px; padding: 0 13px; border-radius: 999px; font: 700 12.5px/1 var(--l3d-tx); color: var(--l3d-mute); }
 .seg button.on { color: #2a1d18; background: linear-gradient(#ffe7a6, var(--l3d-gold)); }
@@ -577,5 +578,13 @@ html.l3d-on.l3d-chat-dock .cy-chat.l3d-idle:not(:hover):not(:focus-within) .cy-c
 html.l3d-on.l3d-chat-dock .cy-chat.l3d-idle:not(:hover):not(:focus-within) .cy-chat-h { display: none; }
 html.l3d-on.l3d-chat-dock .cy-chat.l3d-idle:not(:hover):not(:focus-within) .cy-chat-l { max-height: 112px; overflow: hidden;
   -webkit-mask: linear-gradient(transparent, #000 22px); mask: linear-gradient(transparent, #000 22px); }
+html.l3d-on.l3d-chat-dock .cy-chat .cy-chat-tabs button.l3d-mine-tab { white-space: nowrap; }
+html.l3d-on.l3d-chat-dock .cy-chat.l3d-mine-on .cy-chat-tabs button[aria-selected="true"]:not(.l3d-mine-tab) { background: rgba(29,22,32,.8); box-shadow: 0 0 0 1px #ffcf6a47; color: #bfaab7; }
+html.l3d-on.l3d-chat-dock .cy-chat.l3d-mine-on .cy-chat-l:not(.l3d-mine-l), html.l3d-on.l3d-chat-dock .cy-chat.l3d-mine-on .cy-chat-f:not(.l3d-mine-f),
+html.l3d-on.l3d-chat-dock .cy-chat.l3d-mine-on .cy-chat-to, html.l3d-on.l3d-chat-dock .cy-chat.l3d-mine-on .cy-chat-p { display: none !important; }
+html.l3d-on .cy-chat:not(.l3d-mine-on) .l3d-mine-l, html.l3d-on .cy-chat:not(.l3d-mine-on) .l3d-mine-f { display: none !important; }
+html.l3d-on.l3d-chat-dock .cy-chat .l3d-mine-l { margin: 0; padding: 0; list-style: none; overflow-y: auto; }
+html.l3d-on.l3d-chat-dock .cy-chat .l3d-mine-l li.me b { text-decoration: underline dotted #fff6; }
+html.l3d-on.l3d-chat-dock .cy-chat .l3d-mine-l .cy-chat-0 { color: #bfaab7; }
 html.l3d-on .cy-nm { z-index: 165 !important; }
 `;

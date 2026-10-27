@@ -225,6 +225,7 @@ export class BuyCard {
     if (this.view !== v) return;   // closed meanwhile
     if (!r || !r.ok) { v.step = 'card'; this.render(); this.H.toast((r && r.error) || 'Не получилось', true); return; }
     this.H.toast(of.okText || 'Готово');
+    try { window.dispatchEvent(new CustomEvent('l3d:sfx', { detail: { id: 'shop.buy' } })); } catch { /* no sound */ }
     this.H.onDone?.();
     this.closeByClick();
   }

@@ -21,6 +21,10 @@ export interface Segment {
   preroll?: number;
   /** test-only segments are not part of the final cut */
   test?: boolean;
+  /** which video the segment belongs to (render.mjs --cut=…); default 'promo' */
+  cut?: 'promo' | 'gameplay';
+  /** narrator slots anchored on marks (gameplay cut): text is a suggestion for the voice-over */
+  narr?: { mark: string; off: number; dur: number; text: string }[];
   /** dist-dev page: 'game' (offline demo, default) or 'showcase' */
   page?: 'game' | 'showcase';
   /** reason to skip (feature missing) or null */
@@ -31,7 +35,7 @@ export interface Segment {
 
 /* ------------------------------------------------------------------ helpers */
 /** Walk path (px points) with a cruise speed (m/s): returns a driver(t) that steers the player; yawFn gives the camera. */
-function walker(pts: V2[], v: number, acc = 0.9) {
+export function walker(pts: V2[], v: number, acc = 0.9) {
   const sp = new Spline(pts.map(pxToM));
   const dur = travel(0, sp.length, v, acc).total;
   let hd: number[] | null = null;
@@ -68,8 +72,8 @@ function walker(pts: V2[], v: number, acc = 0.9) {
  * A walker along waypoints (px in the city / metres in rooms), each leg routed around props and walls with A*
  * (planPath) unless marked direct (e.g. the leg that jumps over a bench). Built in setup (needs the walk space).
  */
-type Leg = V2 | { to: V2; direct: true };
-function routed(G: G, start: V2, legs: Leg[], v: number, acc = 0.9) {
+export type Leg = V2 | { to: V2; direct: true };
+export function routed(G: G, start: V2, legs: Leg[], v: number, acc = 0.9) {
   const toM = (p: V2): V2 => (G.ctl.units === 'px' ? pxToM(p) : p);
   const pts: V2[] = [toM(start)];
   for (const L of legs) {
@@ -83,14 +87,14 @@ function routed(G: G, start: V2, legs: Leg[], v: number, acc = 0.9) {
   for (const p of pts) if (Math.hypot(p[0] - out[out.length - 1][0], p[1] - out[out.length - 1][1]) > 0.3) out.push(p);
   return walker(out.map((p) => (G.ctl.units === 'px' ? [p[0] / 0.01, p[1] / 0.02 + 800] as V2 : [p[0] / 0.01, p[1] / 0.02 + 800] as V2)), v, acc);
 }
-const cam = (G: G, yaw: number, pitch: number) => { G.rig.yaw = yaw; G.rig.pitch = pitch; };
-const mode = (G: G, m: 'fp' | 'tp') => { if (G.ctx.state.mode !== m) G.ctx.uiHost.setCameraMode(m); };
+export const cam = (G: G, yaw: number, pitch: number) => { G.rig.yaw = yaw; G.rig.pitch = pitch; };
+export const mode = (G: G, m: 'fp' | 'tp') => { if (G.ctx.state.mode !== m) G.ctx.uiHost.setCameraMode(m); };
 /** Once-per-segment triggers keyed by name: fire(G, 'x', t >= 3, () => …). */
 const fired = new Set<string>();
 const once = (key: string, cond: boolean, fn: () => void) => { if (cond && !fired.has(key)) { fired.add(key); fn(); } };
 
 /* ------------------------------------------------------------------ cards */
-const uiOpacity = (G: G, o: number) => { const e = G.ctx?.uiRoot as HTMLElement | undefined; if (e) e.style.opacity = String(clamp(o)); };
+export const uiOpacity = (G: G, o: number) => { const e = G.ctx?.uiRoot as HTMLElement | undefined; if (e) e.style.opacity = String(clamp(o)); };
 function titleCard(t: number, a: number, b: number): void {
   const e = el('title', 'card', '<h1>Legion 3D</h1><p>Ярмарка Легиона — от первого и третьего лица</p>');
   const o = env(t, a, b, 0.7, 0.7);
@@ -169,14 +173,14 @@ const FAIR: Segment = {
 
 /* ------------------------------------------------------------------ aiming at things */
 /** Eye position (m): feet + EYE in FP. */
-const eye = (G: G): [number, number, number] => { const f = G.ctx.feet; return [f.x, f.y + 1.15, f.z]; };
+export const eye = (G: G): [number, number, number] => { const f = G.ctx.feet; return [f.x, f.y + 1.15, f.z]; };
 /** yaw/pitch from the eye to a world point. */
-function aimTo(G: G, p: [number, number, number]): [number, number] {
+export function aimTo(G: G, p: [number, number, number]): [number, number] {
   const e = eye(G), dx = p[0] - e[0], dy = p[1] - e[1], dz = p[2] - e[2];
   return [Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz))];
 }
 /** Wait (async, virtual time) until cond() or timeout (ms). */
-const until = (cond: () => boolean, ms = 8000) => new Promise<boolean>((res) => {
+export const until = (cond: () => boolean, ms = 8000) => new Promise<boolean>((res) => {
   const t0 = performance.now();
   const f = () => { if (cond()) res(true); else if (performance.now() - t0 > ms) res(false); else setTimeout(f, 50); };
   f();

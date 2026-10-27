@@ -8,14 +8,23 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { G } from './kit';
-import { SEGMENTS, type Segment, FPS } from '../shots';
+import { SEGMENTS as PROMO, type Segment, FPS } from '../shots';
+import { GAMEPLAY } from '../gameplay';
+
+const SEGMENTS: Segment[] = [...PROMO, ...GAMEPLAY];
 import { setupDemo } from './demo';
 
 type Status = 'idle' | 'setup' | 'ready' | string;
 
 interface Director {
   status: Status;
-  segments: { id: string; dur: number; xfade: number; title: string; test: boolean; page: string }[];
+  segments: { id: string; dur: number; xfade: number; title: string; test: boolean; page: string; cut: string; narr: unknown[] }[];
+  /** virtual seconds of the first captured frame's step (audio zero) — set by go() */
+  readonly t0: number;
+  /** named moments of the current segment: [name, segment time s] */
+  readonly marks: [string, number][];
+  /** write a mark (segment time now; also into the audio capture log) */
+  mark(name: string): void;
   /** the page of the segment has booted */
   booted(page: string): boolean;
   init(id: string): void;
@@ -35,6 +44,8 @@ declare global { interface Window { __director: Director; __l3dGame?: any; __dem
   let started = -1;      // vt frame at go()
   let status: Status = 'idle';
   let fastOn = false, wrapped = false;
+  let t0 = 0;
+  const marks: [string, number][] = [];
   // Rendering may use Math.random (post noise, particles…). Give it its own stream, seeded per frame, so the
   // simulation's random sequence is the same whether frames are rendered or fast-forwarded (resume / --chunk).
   const wrapRender = () => {
@@ -55,7 +66,14 @@ declare global { interface Window { __director: Director; __l3dGame?: any; __dem
   const d: Director = {
     get status() { return status; },
     set status(s) { status = s; },
-    segments: SEGMENTS.map((s) => ({ id: s.id, dur: s.dur, xfade: s.xfade ?? 0, title: s.title, test: !!s.test, page: s.page || 'game' })),
+    segments: SEGMENTS.map((s) => ({ id: s.id, dur: s.dur, xfade: s.xfade ?? 0, title: s.title, test: !!s.test, page: s.page || 'game', cut: s.cut || 'promo', narr: s.narr || [] })),
+    get t0() { return t0; },
+    marks,
+    mark(name) {
+      const t = started < 0 ? -1 : (vt.frame - started - 1) / FPS;
+      marks.push([name, +t.toFixed(4)]);
+      const log = (window as any).__VT_AUDIO_LOG; if (Array.isArray(log)) log.push({ k: 'mark', t: +(vt.now / 1000).toFixed(4), name });
+    },
     get frame() { return started < 0 ? -1 : vt.frame - started; },
     init(id) {
       seg = SEGMENTS.find((s) => s.id === id) || null;
@@ -74,11 +92,12 @@ declare global { interface Window { __director: Director; __l3dGame?: any; __dem
           await seg!.setup(G!);
           wrapRender();
           vt.seed(0xc0ffee + id.length); vt.realign();   // setup took a machine-dependent number of frames too
+          resetSound(g);
           status = 'ready';
         } catch (e: any) { status = 'error:' + (e?.stack || e); }
       })();
     },
-    go() { started = vt.frame; },
+    go() { started = vt.frame; t0 = (vt.now + 1000 / FPS) / 1000; },
     booted(page) {
       if (page === 'showcase') return !!(window as any).__showcase?.ready && document.fonts.status === 'loaded';
       return !!(window.__l3dGame && window.__demo && document.fonts.status === 'loaded');
@@ -91,6 +110,12 @@ declare global { interface Window { __director: Director; __l3dGame?: any; __dem
     },
   };
   window.__director = d;
+
+  /** The game's sound engine (if it started) gets the same RNG state and ambience timers on every run. */
+  function resetSound(g: any): void {
+    const e = g?.ctx?.dev?.sound; if (!e) return;
+    try { e.rng.s = 0x51ed; e.gustT = 0; e.creakT = 30; e.meowT = 120; e.cds?.clear?.(); e.picker?.last?.clear?.(); } catch { /* */ }
+  }
 
   vt.hooks.push(() => {
     if (!seg || !G || (status !== 'ready')) return;

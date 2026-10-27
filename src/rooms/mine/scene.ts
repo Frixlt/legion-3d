@@ -26,6 +26,7 @@ import { createAvatarKit, createLabels, appearanceFrom, type LabelsEx } from '..
 import type { Avatar } from '../../contracts/modules';
 import { GW, GH, N_CELLS, K, CW, SIDE, W, YB, Y0, H, FOOT, ZONE, mx, mz, px, py, cellXY, standable, digSpot, centerOf, hashL, type Rect } from './geo';
 import { MineModel, stoneProgress, type Cell } from './state';
+import { hideOutline, showOutline } from '../../engine/outline';
 import { minePal, rockGeo, crystalGeo, nuggetGeo, mushroomGeos, pickaxeGeo, badgeTexture, oreCol, ROCK, CRYSTAL, type MinePal, type RockGeo } from './art';
 
 const CELL = CW * K;               // 2.4 m
@@ -173,9 +174,11 @@ export class MineScene {
     this.mStem = new THREE.InstancedMesh(mg.stem, new THREE.MeshStandardMaterial({ color: '#efe6d0', roughness: 0.8 }), 400); this.mStem.name = 'mine:mushStem';
     this.mCap = new THREE.InstancedMesh(mg.cap, new THREE.MeshBasicMaterial({}), 400); this.mCap.name = 'mine:mushCap';
     for (const im of [this.mStem, this.mCap]) { im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(400 * 3), 3); im.count = 0; im.frustumCulled = false; this.dynamic.add(im); }
-    // aimed-stone highlight (inverted hull) + ground ring
-    this.hl = new THREE.Mesh(rockGeo('round', 0).geo, new THREE.MeshBasicMaterial({ color: '#ffe27a', side: THREE.BackSide, transparent: true, opacity: 0.85, depthWrite: false }));
-    this.hl.visible = false; this.hl.name = 'mine:hl'; this.hl.matrixAutoUpdate = false; this.dynamic.add(this.hl);
+    // aimed stone: an invisible carrier of the stone's geometry + matrix for the silhouette outline (engine/outline.ts)
+    this.hl = new THREE.Mesh(rockGeo('round', 0).geo, new THREE.MeshBasicMaterial({ visible: false }));
+    this.hl.name = 'mine:hl'; this.hl.matrixAutoUpdate = false; this.hl.frustumCulled = false; this.hl.raycast = () => { /* never hit */ };
+    this.dynamic.add(this.hl);
+    // own-stone dig spot: ring on the floor
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.9, depthWrite: false }));
     this.ring.visible = false; this.ring.name = 'mine:ring'; this.dynamic.add(this.ring);
     // «жёлтый круг»: a glowing ring on the floor around every stone that can be dug now
@@ -259,7 +262,7 @@ export class MineScene {
     this.root.add(kit.root);
     this.buildNpcs();
     // stone slots (geometry choice per cell is stable for a floor)
-    this.slots = [];
+    this.slots = []; this.hlI = -2;   // stones rebuilt: re-bind the aimed stone's outline
     for (const im of this.stones) im.count = 0;
     for (let i = 0; i < N_CELLS; i++) {
       const c = F.cells[i];
@@ -737,6 +740,17 @@ export class MineScene {
   /* ================================================================ per frame */
 
   private lastHere = 0;
+  /** Outline stone i (−1 = none): exactly the aimed stone's own mesh shape. Called on aim change (no allocations). */
+  outlineStone(i: number): void {
+    this.hlI = i;
+    const s = i >= 0 ? this.slots[i] : null;
+    if (s) {
+      this.hl.geometry = rockGeo(KINDS[s.kind].kind, KINDS[s.kind].v).geo;
+      this.hl.matrix.copy(s.m); this.hl.updateMatrixWorld(true);
+      showOutline(this, this.hl);
+    } else hideOutline(this);
+  }
+
   /**
    * Per-frame update: highlight of the aimed stone, progress bars, badges bobbing, others (walkers + diggers),
    * debris, labels. `aimI` = stone under the crosshair (−1 none), `feet` = player feet (room metres).
@@ -763,16 +777,8 @@ export class MineScene {
     this.placeLights(feet, dt, dark);
     if (this.oreGlow) ((this.oreGlow.material as THREE.ShaderMaterial).uniforms.uTime.value = t);
     void lamp;
-    // aimed stone: inverted-hull outline + floor ring
-    if (aimI !== this.hlI) {
-      this.hlI = aimI;
-      const s = aimI >= 0 ? this.slots[aimI] : null;
-      if (s) {
-        const g = rockGeo(KINDS[s.kind].kind, KINDS[s.kind].v).geo; this.hl.geometry = g;
-        this.hl.matrix.copy(s.m).multiply(_m.makeScale(1.04, 1.03, 1.04)); this.hl.matrixWorldNeedsUpdate = true; this.hl.visible = true;
-      } else this.hl.visible = false;
-    }
-    if (this.hl.visible) (this.hl.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(t * 6) * 0.25;
+    // aimed stone: silhouette outline (the carrier takes the stone's geometry and matrix)
+    if (aimI !== this.hlI) this.outlineStone(aimI);
     // the own stone: a ring on the floor at the dig spot
     if (st && M.myI >= 0 && !M.dug[M.myI]) {
       const sp = digSpot(M.dug, M.myI);
@@ -1004,6 +1010,7 @@ export class MineScene {
     this.labels.dispose();
     for (const im of [...this.stones, this.nugget, this.crystal, this.mStem, this.mCap]) { im.dispose(); }
     this.stoneMat.dispose();
+    hideOutline(this);
     for (const m of [this.nugget.material, this.crystal.material, this.mStem.material, this.mCap.material, this.hl.material, this.ring.material, this.camCol.material, this.upLamp.material, this.parts.material] as THREE.Material[]) m.dispose();
     this.ring.geometry.dispose(); this.camCol.geometry.dispose(); this.upLamp.geometry.dispose(); this.parts.geometry.dispose();
     for (const b of this.badges) (b.material as THREE.Material).dispose();

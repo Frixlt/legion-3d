@@ -6,9 +6,9 @@
  *
  * create(ctx): closes the site's own mine if open (one presence per tab), POST /api/mine/enter, builds the cave,
  * registers interactables (front stones, lift, buyer, supplier, board, way down), mounts the HUD and returns the
- * RoomScene (free/groundAt over the cleared cells + entrance area). Keys: E dig / use, L journal + mine chat,
- * Esc closes a card / the journal. Mine chat lines become bubbles over the miners and lines in the journal's
- * «Чат шахты» tab (the HUD's input posts /api/mine/chat/say — only when the player types and sends). Throws (→ room manager falls back to the site's
+ * RoomScene (free/groundAt over the cleared cells + entrance area). Keys: E dig / use, L journal,
+ * Esc closes a card / the journal. Mine chat lines become bubbles over the miners and lines in the «⛏ Шахта» tab of the
+ * bottom-left chat dock (src/ui/chat.ts attachMineChat; posts /api/mine/chat/say — only when the player types and sends). Throws (→ room manager falls back to the site's
  * 2D mine) when the hero has no access to this mine or the game refuses the entry. See docs/MINE.md.
  */
 import { setModal } from '../../core/modal';
@@ -21,6 +21,7 @@ import { MineHud } from './hud';
 import { N_CELLS, REACH, mx, mz, px, py, spawnPt, frontOfObj, cellXY, type Pt } from './geo';
 import { TX, blockTitle, gotText } from './state';
 import { pickaxeGeo } from './art';
+import { attachMineChat } from '../../ui/chat';
 
 export { MineClient } from './net';
 export { MineModel } from './state';
@@ -106,6 +107,13 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
   hud.render();
 
   /* ---------------------------------------------------------------- client events */
+  // the mine chat is the «⛏ Шахта» tab of the bottom-left chat dock (removed again on dispose); it posts only when the player sends
+  const offChatTab = client.chat.on ? attachMineChat({
+    lines: () => client.chat.lines,
+    on: (fn) => client.on((e) => { if (e.type === 'chat') fn(e.lines); }),
+    say: (t) => client.say(t),
+    me: () => login,
+  }) : () => { /* no mine chat */ };
   const offEv = client.on((e) => {
     if (e.type === 'state') { scene.setView(M); if (e.newFloor) { fogDark = null; refreshBoxes(); } hud.render(); }
     else if (e.type === 'presence' || e.type === 'here' || e.type === 'busy' || e.type === 'other') hud.render();
@@ -115,6 +123,7 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
     else if (e.type === 'burst') {
       for (const b of e.bursts) {
         scene.burst(b.i, M);
+        { const c = cellXY(b.i); window.dispatchEvent(new CustomEvent('l3d:sfx', { detail: { id: 'mine.break', x: mx(c.cx), y: 0.6, z: mz(c.cy) } })); }
         if (!b.mine) continue;
         const p = cellXY(b.i), cell = M.F && M.F.cells[b.i], g = b.got;
         const text = g && g.loot ? 'Сундук: ' + Object.entries(g.loot).filter(([, v]) => v > 0).map(([k, v]) => gotText(v, k)).join(', ')
@@ -144,7 +153,9 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
       hit: boxes[i], reach: 3.4,
       enabled: () => !M.dug[i] && M.isFront(i) && !M.dark && !modalOn,
       use: () => { void digAt(i); },
-    };
+      // the scene outlines the aimed stone's own shape (scene.update → outlineStone), not the hit box
+      highlight: () => { /* drawn by the scene */ },
+    } as Interactable;
     unsubs.push(ctx.interact.add(it));
   }
   const digAt = async (i: number) => {
@@ -188,7 +199,7 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
   for (const m of fpInner.children) { (m as THREE.Mesh).renderOrder = 10; ((m as THREE.Mesh).material as THREE.Material).depthTest = true; }
   ctx.camera.add(fpPick);
   const tpPick = scene.makePick(); tpPick.visible = false;
-  let swingT = 0, digNow = false, vmHidden = false;
+  let swingT = 0, digNow = false, vmHidden = false, struck = false;
   const core = ctx as any;
 
   /* ---------------------------------------------------------------- per frame */
@@ -225,6 +236,9 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
       if (!fp && core.controller) { const c = cellXY(M.myI), ctl = core.controller(); if (ctl && ctl.setFace) ctl.setFace(Math.atan2(-(mx(c.cx) - ctx.player.x), -(mz(c.cy) - ctx.player.z))); }
       swingT += dt;
       const T = 1.1, k = (swingT % T) / T;
+      // the pick meets the stone at the end of the fast strike (k ≈ 0.66): one hit sound per swing
+      if (k < 0.5) struck = false;
+      else if (!struck && k >= 0.66) { struck = true; const c = cellXY(M.myI); window.dispatchEvent(new CustomEvent('l3d:sfx', { detail: { id: 'mine.hit', x: mx(c.cx), y: 0.7, z: mz(c.cy) } })); }
       // wind up (0…0.55) then a fast strike (0.55…0.7) and recover
       // raise (head up and back), then a fast strike forward-down, then recover
       const a = k < 0.55 ? 0.15 + k / 0.55 * 0.55 : k < 0.68 ? 0.7 - (k - 0.55) / 0.13 * 1.9 : -1.2 + (k - 0.68) / 0.32 * 1.35;
@@ -254,7 +268,7 @@ export async function createMineRoom(ctx: RoomContext, o: MineRoomOpts = {}): Pr
       scene.update(dt, t, camera, M, Date.now(), aim, feet3);
     },
     dispose() {
-      offFrame(); offEv(); offKey(); for (const u of unsubs) u();
+      offFrame(); offEv(); offChatTab(); offKey(); for (const u of unsubs) u();
       client.close(); hud.dispose();
       if (vmHidden && core.vm) core.vm.setVisible(true);
       fpPick.removeFromParent(); tpPick.removeFromParent();

@@ -9,6 +9,38 @@ import { getModel, releaseModel, B, BONE_COUNT, BONE_PARENT, type ModelData } fr
 import { faceTexture, facePatch } from './face';
 import { toonMat, outlineMat, faceMat, alphaLevel, ALPHA_LEVELS, uTime, auraPointsMat, glowMat, glowSolidMat, type Variant } from './materials';
 import { nickExtras, jhash } from './appearance';
+import { TP_TRACKS, TP_CONTACT, TP_VALUES, FAMILY_TRACK, trackLen, sampleTrack } from './attacks';
+import { weaponFamily } from './viewmodel';
+import { BowDraw } from './bowdraw';
+
+/**
+ * What the combat module (src/combat) needs to drive an avatar as a ragdoll: the live bones and the model's rest
+ * data. Returned by `AvatarCombat.combatRig()` (duck-typed: not part of the Avatar contract).
+ */
+export interface CombatRig {
+  bones: THREE.Bone[];
+  /** Rest bone positions in model space (feet at y = 0, looking to −Z). */
+  rest: THREE.Vector3[];
+  handL: THREE.Vector3; handR: THREE.Vector3;
+  y0: number; top: number; w: number; depth: number; eyeY: number; ex: number; armY: number;
+  headTop: number; hasTail: boolean; hasLegs: boolean;
+}
+/** Optional avatar hooks used by src/combat (attacks, ragdolls). */
+export interface AvatarCombat {
+  combatRig(): CombatRig | null;
+  /** Bow draw pose (0 = none … 1 = fully drawn); a 'swing' is ignored while drawing. */
+  setDraw(k: number): void;
+  /** Slow the current attack animation almost to a stop for `sec` (hit-stop). */
+  hitStop(sec: number): void;
+  /** White hit flash over the body (0 = off). */
+  setFlash(a: number): void;
+  /** Dizzy face (spiral eyes, wobbly mouth) while knocked down. */
+  setDizzy(on: boolean): void;
+  /** World position of the nocked arrow's head while drawing (charge glint); false = not drawing. */
+  arrowTip(out: THREE.Vector3): boolean;
+  /** World positions of the striking edge of the held weapon (or the paw) now, for the swing trail; false = none. */
+  bladeSeg(a: THREE.Vector3, b: THREE.Vector3, pivot?: THREE.Vector3): boolean;
+}
 
 /* ------------------------------------------------------------------ aura */
 interface AuraDef { color: string; size: number; rise: number; n: number; glow?: string; glowOp?: number; additive?: boolean }
@@ -50,10 +82,18 @@ const hidden = () => (hiddenMat ||= new THREE.MeshBasicMaterial({ colorWrite: fa
 
 /* ------------------------------------------------------------------ emotes */
 const EMOTE_LEN: Record<string, number> = { wave: 1.6, cheer: 1.4, equip: 0.8, swing: 0.45, hit: 0.35 };
+for (const k in TP_TRACKS) EMOTE_LEN[k] = trackLen(TP_TRACKS[k]);
+let flashMatProto: THREE.MeshBasicMaterial | null = null;
+const _bm = new THREE.Matrix4(), _bt = new THREE.Vector3(), _bb = new THREE.Vector3(), _bg = new THREE.Vector3(), _bc = new THREE.Vector3(), _bd = new THREE.Vector3();
+const _bn = new THREE.Vector3(), _bv = new THREE.Vector3(), _bh = new THREE.Vector3(), _bq = new THREE.Quaternion();
+const _base: number[] = new Array(TP_VALUES).fill(0), _out: number[] = new Array(TP_VALUES).fill(0);
 /** 'jump' holds the in-air pose until 'land' (or this many seconds, if no landing is reported). */
 const JUMP_MAX = 2.5, LAND_LEN = 0.32;
+/** TP bow draw: the bow is canted about the arrow (rad) so the drawn string reads from the over-the-shoulder camera. */
+export let BOW_CANT = -0.5;
+export function setBowCant(v: number) { BOW_CANT = v; }
 
-class AvatarImpl implements Avatar {
+class AvatarImpl implements Avatar, AvatarCombat {
   readonly root = new THREE.Group();
   headTop = 1.35;
   private model: ModelData | null = null;
@@ -74,6 +114,13 @@ class AvatarImpl implements Avatar {
   /** Jump state: time since take-off (-1 = on the ground) and since landing (-1 = no landing squash). */
   private jumpT = -1; private landT = -1;
   private restY: number[] = [];
+  private drawT = 0; private drawAmt = 0; private stopT = 0;
+  private flash: THREE.SkinnedMesh | null = null; private flashA = 0;
+  private dizzy = false;
+  private bowKit: BowDraw | null = null;
+  private armLRest = new THREE.Vector3(); private armRRest = new THREE.Vector3();
+  /** Time since the bow was loosed (−1 = not recently). */
+  private relT = -1;
 
   constructor(app: Appearance) {
     this.root.name = 'avatar';
@@ -101,6 +148,7 @@ class AvatarImpl implements Avatar {
     if (this.outline) { this.root.remove(this.outline); this.outline = null; }
     if (this.low) { this.root.remove(this.low); this.low = null; }
     this.skel?.dispose();
+    if (this.flash) { this.flash.removeFromParent(); (this.flash.material as THREE.Material).dispose(); this.flash = null; }
     this.auraGroup.clear(); this.root.remove(this.auraGroup); this.auraHalo = null;
 
     // bones
@@ -114,6 +162,8 @@ class AvatarImpl implements Avatar {
       if (par >= 0) this.bones[par].add(b);
     }
     this.restY = this.bones.map((b) => b.position.y);
+    this.armLRest.copy(this.bones[B.armL].position); this.armRRest.copy(this.bones[B.armR].position);
+    if (this.bowKit) { this.bowKit.dispose(); this.bowKit = null; }
     const inv = rest.map((r) => new THREE.Matrix4().makeTranslation(-r.x, -r.y, -r.z));
     this.skel = new THREE.Skeleton(this.bones, inv);
 
@@ -188,7 +238,8 @@ class AvatarImpl implements Avatar {
     if (this.face && this.model) {
       this.face.visible = vis && lod < 2 && !fp;
       const fk = this.model.faceKey.split('|');
-      this.face.material = faceMat(faceTexture({ eyes: fk[0], mouth: fk[1], blush: fk[2] === '1', iris: +fk[3], style: fk[4], narrow: fk[5] === '1', ghost: fk[6] === '1' }), this.model.faceKey, v, this.lvl);
+      const dz = this.dizzy;
+      this.face.material = faceMat(faceTexture({ eyes: dz ? 'dizzy' : fk[0], mouth: dz ? 'wobble' : fk[1], blush: fk[2] === '1', iris: +fk[3], style: fk[4], narrow: fk[5] === '1', ghost: fk[6] === '1' }), this.model.faceKey + (dz ? '|dizzy' : ''), v, this.lvl);
     }
     if (this.low) { this.low.visible = vis && lod === 2 && !fp; this.low.material = toonMat(v, this.lvl); }
     this.auraGroup.visible = vis && lod === 0 && !fp;
@@ -211,6 +262,8 @@ class AvatarImpl implements Avatar {
       return;
     }
     const body = bones[B.body], armL = bones[B.armL], armR = bones[B.armR], legL = bones[B.legL], legR = bones[B.legR];
+    const wrist = bones[B.wrist];
+    wrist.rotation.set(0, 0, 0);
     const s = Math.sin(ph), c = Math.cos(ph);
     // body: bob (two bumps per stride), sway, breathing
     const breathe = Math.sin(tt * 2.2) * 0.012 * (1 - w);
@@ -250,8 +303,10 @@ class AvatarImpl implements Avatar {
       bones[B.cape2].rotation.z = Math.sin(tt * 2.3) * 0.05;
     }
     // emotes override arms
+    if (this.stopT > 0) this.stopT -= dt;
     if (this.emote) {
-      this.emoteT += dt;
+      const prevT = this.emoteT;
+      this.emoteT += this.stopT > 0 ? dt * 0.06 : dt;
       const len = EMOTE_LEN[this.emote] || 1, k = this.emoteT / len;
       if (k >= 1) this.emote = '';
       else {
@@ -270,6 +325,34 @@ class AvatarImpl implements Avatar {
             armR.rotation.set(env * 1.6, 0, 0.18 - env * 0.6);
             armL.rotation.set(env * 1.2, 0, -0.18 + env * 0.4);
             break;
+          case 'slash': case 'smash': case 'thrust': case 'cast': case 'flick': case 'slap': case 'bonk': {
+            const keys = TP_TRACKS[this.emote];
+            _base[0] = armR.rotation.x; _base[1] = armR.rotation.y; _base[2] = armR.rotation.z;
+            _base[3] = armL.rotation.x; _base[4] = armL.rotation.y; _base[5] = armL.rotation.z;
+            _base[6] = _base[7] = _base[8] = _base[9] = _base[10] = _base[11] = 0;
+            sampleTrack(keys, this.emoteT, _base, _out);
+            // a shield arm keeps the shield mostly in front
+            const lw = this.app.gear.s && this.emote !== 'bonk' ? 0.35 : 1;
+            armR.rotation.set(_out[0], _out[1], _out[2]);
+            armL.rotation.set(_base[3] + (_out[3] - _base[3]) * lw, _base[4] + (_out[4] - _base[4]) * lw, _base[5] + (_out[5] - _base[5]) * lw);
+            body.rotation.y += _out[6]; body.rotation.x += _out[7];
+            body.position.y += _out[8]; body.position.z = _out[9];
+            wrist.rotation.set(_out[10], 0, _out[11]);
+            // squash & stretch with the body's dip / rise (crouch in the hold, stretch through the strike)
+            { const sy = 1 + Math.max(-0.12, Math.min(0.1, _out[8] * 2.2)), sxz = 1 / Math.sqrt(sy); body.scale.set(body.scale.x * sxz, body.scale.y * sy, body.scale.z * sxz); }
+            // up on the toes / a little hop: the legs follow the body up and tuck
+            if (_out[8] > 0.02) {
+              const up = _out[8] - 0.02;
+              legL.position.y += up * 0.9; legR.position.y += up * 0.9;
+              legL.rotation.x -= up * 4; legR.rotation.x -= up * 3;
+            }
+            // lunge: the body forward splits the legs into a stance (one forward, one back)
+            if (_out[9] < -0.03) { const l = (_out[9] + 0.03) * 6; legL.rotation.x += l; legR.rotation.x -= l; }
+            // the moment of contact: a smash lands with a squash
+            const ct = TP_CONTACT[this.emote];
+            if (this.emote === 'smash' && this.emoteT >= ct && prevT < ct) { this.landT = 0; }
+            break;
+          }
           case 'swing': case 'hit': {
             // wind up then strike down-forward
             const a = k < 0.35 ? k / 0.35 : 1 - (k - 0.35) / 0.65;
@@ -281,6 +364,37 @@ class AvatarImpl implements Avatar {
         }
       }
     }
+    if (!this.emote || !(this.emote in TP_TRACKS)) body.position.z = 0;
+    // bow draw: the body turns side-on, the bow paw points at the target with the bow upright (and drawn a size
+    // bigger so it reads from behind), the free paw pulls the string back to the side of the face; the drawn string
+    // and the nocked arrow are an overlay (bowdraw.ts) while the bow's own straight string is collapsed
+    const dTarget = this.drawT;
+    this.drawAmt += (dTarget - this.drawAmt) * Math.min(1, dt * (dTarget > this.drawAmt ? 10 : 22));
+    const sb = bones[B.bowString];
+    armL.position.copy(this.armLRest); armR.position.copy(this.armRRest); wrist.scale.setScalar(1); sb.scale.setScalar(1);
+    const bow = this.model!.bow;
+    if (this.relT >= 0) this.relT += dt;
+    if (this.drawAmt > 0.002) {
+      const k = this.drawAmt, e = k * k * (3 - 2 * k), pull = Math.min(1, dTarget);
+      const tremble = pull > 0.95 ? Math.sin(tt * 47) * 0.012 : 0;
+      body.rotation.y += 0.6 * e;
+      body.rotation.x -= 0.04 * e;
+      // the bow arm reaches out to the right (noodle arm): the bow clears the body's silhouette from behind
+      armR.position.set(this.armRRest.x + 0.13 * e, this.armRRest.y + 0.05 * e, this.armRRest.z - 0.04 * e);
+      armR.rotation.set(armR.rotation.x + (1.18 + tremble - armR.rotation.x) * e, armR.rotation.y + (0.81 - armR.rotation.y) * e, armR.rotation.z + (0.74 - armR.rotation.z) * e);
+      wrist.rotation.set(wrist.rotation.x + (-1.83 - wrist.rotation.x) * e, 0, wrist.rotation.z + (-0.63 + BOW_CANT - wrist.rotation.z) * e);
+      const bs = 1 + 0.65 * e;
+      wrist.scale.setScalar(bs);
+      if (bow) this.bowOverlay(bow, e, bs, pull, true);
+      else armL.rotation.set(armL.rotation.x + (1.4 - 0.45 * pull - armL.rotation.x) * e, armL.rotation.y * (1 - e), armL.rotation.z + (0.75 + 0.1 * pull - armL.rotation.z) * e);
+    } else if (bow && this.relT >= 0 && this.relT < 0.22) {
+      // release: the bow kicks, the string twangs (a fast decaying wobble), the paw springs back
+      const r = 1 - this.relT / 0.22, r2 = r * r;
+      armR.rotation.x += 0.3 * r2; wrist.rotation.z += Math.sin(this.relT * 70) * 0.12 * r2;
+      body.rotation.x += 0.05 * r2;
+      this.bowOverlay(bow, 0, 1, Math.sin(this.relT * 95) * 0.12 * r2, false);
+    } else this.bowKit?.hide();
+    if (this.flash) this.flash.visible = this.flashA > 0.01 && this.mesh!.visible;
     // jump: squash → stretch on take-off, legs tucked and arms up in the air; landing: squash and settle
     if (this.jumpT >= 0) {
       this.jumpT += dt;
@@ -343,11 +457,95 @@ class AvatarImpl implements Avatar {
     // jump / land are body states, not arm emotes: they combine with a wave or a swing
     if (anim === 'jump') { this.jumpT = 0; this.landT = -1; return; }
     if (anim === 'land') { this.jumpT = -1; this.landT = 0; return; }
+    if (anim === 'swing') {
+      if (this.drawT > 0) return;              // drawing a bow: the click is the draw, not a swing
+      anim = FAMILY_TRACK[weaponFamily(this.app.gear.w)];
+    }
     this.emote = anim in EMOTE_LEN ? anim : 'wave';
-    this.emoteT = 0;
+    this.emoteT = 0; this.stopT = 0;
+  }
+
+  /* ---- combat hooks (src/combat) ---- */
+  combatRig(): CombatRig | null {
+    const m = this.model;
+    if (!m || !this.bones.length) return null;
+    const d = m.dims;
+    return {
+      bones: this.bones, rest: m.rig.rest, handL: m.rig.handL, handR: m.rig.handR,
+      y0: d.y0, top: d.top, w: d.w, depth: d.depth, eyeY: d.eyeY, ex: d.ex, armY: d.armY,
+      headTop: m.headTop, hasTail: m.hasTail, hasLegs: m.hasLegs,
+    };
+  }
+  arrowTip(out: THREE.Vector3): boolean {
+    const k = this.bowKit;
+    if (!k || !k.mesh.visible || !k.hasArrow) return false;
+    k.mesh.updateWorldMatrix(true, false);
+    out.copy(k.tip).applyMatrix4(k.mesh.matrixWorld);
+    return true;
+  }
+  bladeSeg(a: THREE.Vector3, b: THREE.Vector3, pivot?: THREE.Vector3): boolean {
+    const bl = this.model?.blade;
+    if (!bl || !this.bones.length || this.lod === 2) return false;
+    const bone = this.bones[bl.bone], r = this.model!.rig.rest[bl.bone];
+    bone.updateWorldMatrix(true, false);
+    if (pivot) pivot.setFromMatrixPosition(this.bones[B.armR].matrixWorld);
+    a.copy(bl.a).sub(r).applyMatrix4(bone.matrixWorld);
+    b.copy(bl.b).sub(r).applyMatrix4(bone.matrixWorld);
+    return true;
+  }
+  /** Place the drawn string + arrow overlay (body-bone space) and pull the free paw to the nock. */
+  private bowOverlay(bow: NonNullable<ModelData['bow']>, e: number, bs: number, pull: number, arrow: boolean) {
+    const bones = this.bones, armR = bones[B.armR], wrist = bones[B.wrist], armL = bones[B.armL], r = this.model!.rig.rest[B.wrist];
+    armR.updateMatrix(); wrist.updateMatrix();
+    _bm.multiplyMatrices(armR.matrix, wrist.matrix);
+    _bt.copy(bow.top).sub(r).applyMatrix4(_bm); _bb.copy(bow.bottom).sub(r).applyMatrix4(_bm); _bg.copy(bow.grip).sub(r).applyMatrix4(_bm);
+    _bc.addVectors(_bt, _bb).multiplyScalar(0.5);
+    _bd.subVectors(_bg, _bc).normalize();                                   // aim: string → grip
+    const back = arrow ? (0.03 + 0.24 * pull) * bs : -pull * 0.25 * bs;     // a released string wobbles about the centre
+    _bn.copy(_bc).addScaledVector(_bd, -back);
+    if (!this.bowKit) { this.bowKit = new BowDraw(); }
+    if (this.bowKit.mesh.parent !== bones[B.body]) bones[B.body].add(this.bowKit.mesh);
+    this.bowKit.set(_bt, _bb, _bn, _bg, bs, arrow);
+    this.bowKit.mesh.visible = this.mesh!.visible && !this.fp && this.lod < 2;
+    bones[B.bowString].scale.setScalar(1e-4);
+    if (!arrow) return;
+    // the free paw on the nock: aim the arm at it, then slide the (noodle) arm out of the shoulder the rest of the way
+    const hl = this.model!.rig.handL;
+    _bv.subVectors(_bn, this.armLRest); const L = _bv.length(); _bv.divideScalar(L || 1);
+    _bq.setFromUnitVectors(_bh.copy(hl).normalize(), _bv);
+    armL.quaternion.slerp(_bq, e);
+    const reach = hl.length(), shift = Math.min(0.45, Math.max(0, L - reach)) * e;
+    armL.position.addScaledVector(_bv, shift);
+  }
+  setDraw(k: number): void {
+    if (k <= 0 && this.drawT > 0.15) this.relT = 0;
+    this.drawT = Math.max(0, Math.min(1, k)); if (k > 0 && this.emote && this.emote in TP_TRACKS) this.emote = ''; }
+  hitStop(sec: number): void { this.stopT = Math.max(this.stopT, sec); }
+  setFlash(a: number): void {
+    this.flashA = a;
+    if (a > 0.01 && !this.flash && this.mesh && this.skel && this.model) {
+      // an additive white copy of the body sharing geometry + skeleton; created on the first hit, one material each
+      const mat = (flashMatProto ||= new THREE.MeshBasicMaterial({ color: '#fff6dc', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })).clone();
+      const fl = new THREE.SkinnedMesh(this.model.geo, mat);
+      fl.bind(this.skel, new THREE.Matrix4());
+      fl.boundingSphere = this.mesh.boundingSphere; fl.frustumCulled = false; fl.renderOrder = 2; fl.name = 'avatar-flash';
+      this.flash = fl; this.root.add(fl);
+    }
+    if (this.flash) {
+      (this.flash.material as THREE.MeshBasicMaterial).opacity = Math.min(1, a);
+      this.flash.visible = a > 0.01 && !!this.mesh?.visible;
+      if (this.flash.geometry !== this.mesh!.geometry) this.flash.geometry = this.mesh!.geometry;
+    }
+  }
+  setDizzy(on: boolean): void {
+    if (on === this.dizzy) return;
+    this.dizzy = on;
+    this.applyState();
   }
 
   dispose(): void {
+    if (this.bowKit) { this.bowKit.dispose(); this.bowKit = null; }
+    if (this.flash) { (this.flash.material as THREE.Material).dispose(); this.flash = null; }
     if (this.model) releaseModel(this.model);
     this.model = null;
     this.skel?.dispose();

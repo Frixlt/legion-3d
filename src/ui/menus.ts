@@ -10,6 +10,7 @@ import { slotSilhouette, statIcon } from './icons';
 import { moneyParts } from './money';
 import { coinsHtml } from './hud';
 import { saveSetting, type UiSettings } from './settings';
+import { settingRows, settingRow, readRow, writeRow, pauseItems as extPauseItems, pauseItem } from './settings-ext';
 import type { TabEntry } from './tabs';
 import { MapView } from './map';
 import type { GameContext } from '../contracts/ext';
@@ -495,6 +496,7 @@ export class Menus {
     const items: [string, string, string][] = [['resume', 'Продолжить', 'Esc'], ['tab:' + this.lastChar, 'Персонаж', 'Tab'], ['tab:map', 'Карта', 'M']];
     if (q && q.on) items.push(['classic:quest', 'Поход', '']);
     for (const t of this.c.tabs.system()) items.push(['tab:' + t.id, t.name, t.key]);
+    for (const p of extPauseItems()) items.push(['ext:' + p.id, p.label, p.key || '']);
     items.push(['go:settings', 'Настройки', ''], ['go:help', 'Управление', 'F1'], ['classic-site', 'Классический сайт', 'F8']);
     return items;
   }
@@ -519,7 +521,21 @@ export class Menus {
       ${row('Пузыри чата', 'Сообщения над головами', seg('bubbles', s.bubbles ? 1 : 0, [[1, 'Вкл'], [0, 'Выкл']]))}
       ${row('Миникарта', 'Круглая карта в углу экрана', seg('minimap', s.minimap ? 1 : 0, [[1, 'Вкл'], [0, 'Выкл']]))}
       ${row('Размер интерфейса', '', rng('uiScale', s.uiScale, 0.9, 1.25, 0.05, (v) => Math.round(v * 100) + '%'))}
+      ${this.extRows(row)}
       </div><div class="row" style="justify-content:center;margin-top:16px"><button type="button" class="btn gold" data-act="pause" data-p="go:pause">← Назад</button></div>`)}</div>`;
+  }
+  /** Rows registered by features (src/ui/settings-ext.ts), grouped under small headings. */
+  private extRows(row: (t: string, sub: string, ctl: string) => string): string {
+    let out = '', g: string | undefined;
+    for (const r of settingRows()) {
+      if (r.group && r.group !== g) { g = r.group; out += `<div class="setgroup">${esc(g)}</div>`; }
+      const v = readRow(r);
+      const ctl = r.kind === 'range'
+        ? `<span class="rng"><input type="range" data-xk="${esc(r.key)}" min="${r.min}" max="${r.max}" step="${r.step}" value="${v}"><b>${esc(r.fmt ? r.fmt(+v) : String(v))}</b></span>`
+        : `<span class="seg">${r.options.map(([ov, t]) => `<button type="button" data-act="xset" data-xk="${esc(r.key)}" data-v="${esc(ov)}" class="${ov === v ? 'on' : ''}">${esc(t)}</button>`).join('')}</span>`;
+      out += row(esc(r.label), r.sub ? esc(r.sub) : '', ctl);
+    }
+    return out;
   }
   private pHelp(): string {
     const K: [string[], string][] = [
@@ -561,6 +577,7 @@ export class Menus {
       case 'classic': this.c.open(null); this.c.host.actions.openSitePanel(t.dataset.spec!); break;
       case 'pause': this.pauseAct(t.dataset.p!); break;
       case 'set': this.setFrom(t.dataset.k!, t.dataset.v!); break;
+      case 'xset': { const r = settingRow(t.dataset.xk!); if (r) { writeRow(r, t.dataset.v!); this.render(); } break; }
     }
   }
   private onDbl(e: MouseEvent) {
@@ -602,6 +619,12 @@ export class Menus {
   }
   private onInput(e: Event) {
     const r = e.target as HTMLInputElement; if (r.type !== 'range') return;
+    if (r.dataset.xk) {
+      const x = settingRow(r.dataset.xk); if (!x || x.kind !== 'range') return;
+      const xv = parseFloat(r.value); writeRow(x, xv);
+      r.parentElement!.querySelector('b')!.textContent = x.fmt ? x.fmt(xv) : String(xv);
+      this.paintRange(r); return;
+    }
     const k = r.dataset.k as keyof UiSettings, v = parseFloat(r.value);
     saveSetting(this.c.settings, k, v as never);
     const b = r.parentElement!.querySelector('b')!;
@@ -625,6 +648,7 @@ export class Menus {
     else if (p.startsWith('tab:') || p.startsWith('go:')) this.c.open(p.split(':')[1]);
     else if (p.startsWith('classic:')) { this.c.open(null); this.c.host.actions.openSitePanel(p.slice(8)); }
     else if (p === 'classic-site') { this.c.open(null); this.c.host.exitToClassic(); }
+    else if (p.startsWith('ext:')) { const it = pauseItem(p.slice(4)); this.c.open(null); if (it) setTimeout(() => { try { it.run(); } catch (e) { console.warn('[l3d ui] pause item', e); } }, 0); }
   }
 
   /** Primary action for an item (Enter / double-click). */

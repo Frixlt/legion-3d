@@ -13,19 +13,29 @@
  * Use: E → target (aimed or nearby); LMB → only `aimed` (so clicking near a building never opens it); RMB is never
  * routed here (block). No allocations per frame except the exact raycast while the crosshair is inside an AABB.
  *
- * Highlight: exactly one object — the current target — is highlighted. An interactable with `highlight(on)` draws
- * its own (shop goods, mine stones); otherwise a generic one is applied: a golden back-face shell over the visible
- * meshes of an Object3D hit (shares their geometry, pooled meshes), or a glowing frame on the AABB (or on
- * `highlightBox`) for Box3 / invisible hit volumes. `hit.userData.highlight = false` turns the generic highlight off for an object.
+ * Highlight: exactly one object — the current target — gets the silhouette outline (src/engine/outline.ts; drawn by
+ * the engine: screen-space mask + edge at q2–3, inverted hull at q0–1). An interactable with `highlight(on)` draws its
+ * own (shop goods, mine stones: they call showOutline themselves); otherwise the outline sources are, in order:
+ * `outline` (objects/meshes, or a function returning them — doors give their door-leaf proxy), the visible meshes of an
+ * Object3D hit, or — for a Box3 / invisible hit volume — a fitted proxy: the static scene triangles lying inside the
+ * volume (`highlightBox` if given) plus room avatars standing in it, built once per interactable and cached.
+ * `hit.userData.highlight = false` turns it off for an object. No boxes, no shells.
  */
 import * as THREE from 'three';
 import type { Interactable, InteractSystem } from '../contracts/ext';
 import type { Unsub } from '../contracts';
+import { fitOutlineProxy, hideOutline, outlineOwner, showOutline } from '../engine/outline';
 
-/** Interactable with the optional highlight hook (not in the v2 contract yet; duck-typed). */
+const outlineOwnerIs = (t: unknown) => outlineOwner() === t;
+
+/** Outline sources: objects (their visible meshes) or carrier meshes (used as is), or a lazy getter of them. */
+export type OutlineSpec = THREE.Object3D | readonly THREE.Object3D[] | (() => THREE.Object3D | readonly THREE.Object3D[] | null);
+/** Interactable with the optional highlight hooks (not in the v2 contract yet; duck-typed). */
 export type InteractableEx = Interactable & {
   highlight?(on: boolean): void;
-  /** Box for the generic frame highlight when it should differ from the hit volume (doors: the doorway only). */
+  /** What to outline instead of the hit volume (doors: the door leaf / doorway proxy). */
+  outline?: OutlineSpec;
+  /** Region of the fitted proxy when it should differ from the hit volume (Box3 / invisible hits). */
   highlightBox?: THREE.Box3;
   soon?: boolean; title?: string;
 };
@@ -63,6 +73,9 @@ interface Entry {
   center: THREE.Vector3; radius: number;
   exact: boolean;           // exact mesh raycast after the AABB test
   hasMesh: boolean;
+  /** Fitted outline proxy (Box3 / invisible hits): undefined = not built yet. */
+  fit?: THREE.Object3D[];
+  fitGeo?: THREE.BufferGeometry;
 }
 
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -70,39 +83,15 @@ const _ray = new THREE.Ray();
 const _rc = new THREE.Raycaster();
 const _hits: THREE.Intersection[] = [];
 
-/* ---- generic highlight: pooled shells + one AABB frame, created lazily once ---- */
-const SHELL_MAX = 8, SHELL_SCALE = 1.06;
-const GOLD = 0xffd36a;
-let shellMat: THREE.MeshBasicMaterial | null = null;
-let frame: THREE.LineSegments | null = null;
-const shells: THREE.Mesh[] = [];
-const noRaycast = () => { /* highlight meshes are never hit */ };
-function shellPool(): THREE.Mesh[] {
-  if (!shellMat) {
-    shellMat = new THREE.MeshBasicMaterial({ color: GOLD, side: THREE.BackSide, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
-    for (let i = 0; i < SHELL_MAX; i++) { const m = new THREE.Mesh(undefined, shellMat); m.name = 'l3d:highlight'; m.raycast = noRaycast; m.renderOrder = 3; m.matrixAutoUpdate = true; shells.push(m); }
-  }
-  return shells;
-}
-function frameMesh(): THREE.LineSegments {
-  if (!frame) {
-    const g = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
-    const m = new THREE.LineBasicMaterial({ color: GOLD, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-    frame = new THREE.LineSegments(g, m); frame.name = 'l3d:highlight-frame'; frame.raycast = noRaycast; frame.renderOrder = 3;
-  }
-  return frame;
-}
-
 export function createInteractSystem(opts: { scene?: THREE.Object3D } = {}): InteractSystemEx {
   const entries: Entry[] = [];
-  let lit: Entry | null = null, litShells = 0;
+  let lit: Entry | null = null;
+  const token = {};   // outline owner
   const unlight = () => {
     if (!lit) return;
     const i = lit.i as InteractableEx;
     if (typeof i.highlight === 'function') { try { i.highlight(false); } catch (e) { console.error('[l3d] highlight', i.id, e); } }
-    for (let k = 0; k < litShells; k++) { const m = shells[k]; m.removeFromParent(); m.geometry = undefined as unknown as THREE.BufferGeometry; }
-    litShells = 0;
-    if (frame) frame.removeFromParent();
+    hideOutline(token);
     lit = null;
   };
   const light = (e: Entry) => {
@@ -110,32 +99,25 @@ export function createInteractSystem(opts: { scene?: THREE.Object3D } = {}): Int
     const i = e.i as InteractableEx;
     if (typeof i.highlight === 'function') { try { i.highlight(true); } catch (err) { console.error('[l3d] highlight', i.id, err); } return; }
     if (e.obj?.userData?.highlight === false) return;
-    if (e.obj) {
-      const pool = shellPool();
-      e.obj.traverseVisible((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh || litShells >= SHELL_MAX || m.name === 'l3d:highlight' || !m.geometry) return;
-        const mat = m.material as THREE.Material | THREE.Material[];
-        if (Array.isArray(mat) ? !mat.some((x) => x.visible) : !mat.visible) return;
-        const g = m.geometry;
-        if (!g.boundingBox) g.computeBoundingBox();
-        const sh = pool[litShells++];
-        sh.geometry = g;
-        // scale about the geometry centre (not the mesh origin) so the shell wraps the object evenly
-        g.boundingBox!.getCenter(sh.position).multiplyScalar(1 - SHELL_SCALE);
-        sh.scale.setScalar(SHELL_SCALE);
-        m.add(sh);
-      });
-      if (litShells > 0) return;
-    }
-    // Box3 or invisible hit volume → glowing frame on the AABB
-    if (!opts.scene) return;
-    const f = frameMesh();
-    const hb = i.highlightBox ?? e.box;
-    hb.getCenter(f.position);
-    hb.getSize(f.scale);
-    f.scale.addScalar(0.04);
-    opts.scene.add(f);
+    try {
+      if (i.outline) {
+        const o = typeof i.outline === 'function' ? i.outline() : i.outline;
+        if (o) showOutline(token, o);
+        return;
+      }
+      if (e.obj && e.hasMesh) {
+        showOutline(token, e.obj);
+        if (outlineOwnerIs(token)) return;
+      }
+      // Box3 or invisible hit volume → fitted proxy out of the scene geometry inside it (built once)
+      if (!opts.scene) return;
+      if (!e.fit) {
+        const r = fitOutlineProxy(opts.scene, i.highlightBox ?? e.box, { name: i.id });
+        e.fit = r.proxy ? [r.proxy, ...r.avatars] : r.avatars;
+        e.fitGeo = r.proxy?.geometry;
+      }
+      if (e.fit.length) showOutline(token, e.fit);
+    } catch (err) { console.error('[l3d] outline', i.id, err); }
   };
   let aimed: Interactable | null = null, near: Interactable | null = null;
   let enabled = true;
@@ -176,6 +158,7 @@ export function createInteractSystem(opts: { scene?: THREE.Object3D } = {}): Int
       entries.push(e);
       return () => {
         if (lit === e) unlight();
+        e.fitGeo?.dispose(); e.fit = undefined; e.fitGeo = undefined;
         const k = entries.indexOf(e); if (k >= 0) entries.splice(k, 1);
         if (aimed === i) aimed = null;
         if (near === i) near = null;

@@ -1,4 +1,8 @@
-# Review video — deterministic frame capture
+# Review & gameplay videos — deterministic frame capture
+
+Two cuts: the **promo** (review video, below; `video/frames/`, `legion-3d-review.mp4`) and the **gameplay** video
+with the game's own sound (`--cut=gameplay`, see «Gameplay cut» further down; `video/frames-gameplay/`,
+`legion-3d-gameplay.mp4`).
 
 Renders the ≈75 s review video of the extension (1920×1080, 60 fps, H.264) from the offline demo
 (`dist-dev/game.html`: fake site, bots with made-up names) and the model gallery (`dist-dev/showcase.html`).
@@ -80,4 +84,71 @@ headless. Always pass `--profile=<fixed dir>`: on Windows Chrome probes the OS p
 profiles therefore cost one failed logon per launch and can trigger the account lockout policy. With a persistent
 profile and one Chrome per run the probe happens once. Copy only `dist-dev/{game,showcase}.*`,
 `scripts/video/render.mjs` and `video/bundle/director.js` (built with `node scripts/video/build.mjs`); run
-`render.mjs --gpu --no-build --profile=…`; `playwright-core` must be resolvable from the folder.
+`render.mjs --gpu --no-build --profile=…`; `playwright-core` must be resolvable from the folder. The gameplay cut also
+needs `scripts/video/{audio,narration}.mjs`, `video/bundle/audio.js` and ffmpeg/ffprobe on PATH (the sound is rendered
+in the same persistent profile after the picture).
+
+## Gameplay cut (`--cut=gameplay`, `gameplay.ts`)
+
+≈ 92 s (≈ 81 s without `gp-fun`) of one evening of play at a player's pace, mostly first person, all through the game's own input path: the
+movement stick, real key events (E use, F inspect, V camera, Space jump, L journal, Esc, F9, Enter), a canvas click
+that grabs the pointer (pointer lock is emulated in headless, `vtime.ts` `cfg.lock`, so the crosshair, prompts and LMB
+attacks behave as with a mouse) and a drawn cursor only while a card is open. Inside a segment everything after a room
+change is timed from the frame the room opened (marks), so the shots follow the game, not a stopwatch.
+
+| # | id | s | what |
+|---|---|---|---|
+| 1 | `gp-fair` | 37.6 | fade in, FP on the lower fair by the beds, look around, cats chat (bubbles) → walk → **V** to TP → **Space** over the bench at (4800, 1290) → up the stairs → **V** back to FP → the «Лавка» door outlined, prompt «[E] Войти: Лавка» → **E** → inside (the door swings shut behind) → walk to the shelves → **F** «Осмотреть» card (Килька) → **Esc** → aim at the next good (outline follows, tag lights up) → **E** «Купить «Целый лосось» за 48 мед.? Да / Нет» → cursor clicks **Да** (demo-only fake purchase: the offline site answers ok) → toast «Куплено…» + coins → a look at the next shelf → turn, walk to the exit, **E** → the door swings open, fade |
+| 2 | `gp-walk` | 13.5 | out of «Лавка»: a few steps, **V** to TP, **Enter** → the line is typed into the chat → **Enter**: own bubble + chat line, a cat answers; run down the stairs westwards |
+| 3 | `gp-mine` | 24.5 | fade in by the canal, walk to the mine portal (outline, «[E] Войти: ⛏ Шахта») → **E** → the 3D mine → walk between stones to the nearest reachable one → aim (outline + ring) → **E**: pickaxe swings, progress, the stone breaks, «+N осколков» → **L** journal → **L** closes → a look round the mine |
+| 4 | `gp-fun` | 12 | *only if combat or photo mode exist*: TP, step up to a cat, **LMB** ×2 (melee weapon from the bag) → ragdolls; **F9** photo mode, **Enter** snapshot, **Esc** back |
+| 5 | `gp-end` | 7 | end card «Legion 3D» + **github.com/ascorblack/legion-3d/releases/latest** + keys over a slow drift |
+
+Halloween: the gameplay cut sets «Праздничное оформление» to «Всегда» (`l3d.event.mode=on`); with the seasonal
+feature present the city is decorated, without it nothing changes. A segment whose `requires()` fails is skipped and
+left out of the cut (`gp-fun` without combat and photo mode).
+
+```bash
+npm run build                                   # dist-dev/ + the bundles
+export CHROMIUM=/usr/bin/google-chrome
+node scripts/video/render.mjs --cut=gameplay    # → video/legion-3d-gameplay.mp4 (1920×1080, picture + game sound)
+node scripts/video/render.mjs --cut=gameplay --dsf=1.3333 --name=legion-3d-gameplay-1440p   # 2560×1440
+node scripts/video/render.mjs --cut=gameplay --gpu --profile=C:\l3d-chrome --workers=3     # Windows GPU box
+node scripts/video/render.mjs --cut=gameplay --segments=gp-mine --w=960 --h=540 --at=4,9,14   # stills (+ marks in the log)
+node scripts/video/render.mjs --cut=gameplay --audio-only --no-assemble                       # sound captures only (≈ 30 s/segment)
+node scripts/video/audio.mjs --cut=gameplay     # re-master + re-mux the sound only (segment WAVs + video exist)
+node scripts/video/narration.mjs --voice=<dir with slot-1.wav…>   # optional narrator → legion-3d-gameplay.voice.mp4
+```
+
+Outputs (`video/`): `frames-gameplay/<id>/NNNNN.jpg` + `audio.json` (capture) + `audio.wav` (segment soundtrack),
+`legion-3d-gameplay.video.mp4` (picture only), `.raw.wav` (joined game sound before mastering), `.wav` (mastered),
+`.mp4` (picture copied + AAC 256k), `.markers.json` (scenes, marks, every sound event and the narrator slots on the
+final timeline), `.audio.json`.
+
+## Sound (gameplay cut)
+
+The picture is captured in virtual time, so the sound is not recorded but **rebuilt from a log**:
+
+1. **Capture.** With `cfg.audio` (`vtime.ts`) the page's `new AudioContext()` becomes a never-rendered
+   OfflineAudioContext whose `currentTime` is the virtual clock, and `window.__VT_AUDIO_LOG = []` turns on the hook in
+   `src/audio/capture.ts`: the game's `SoundEngine` appends every voice it really starts (after cooldowns, distance
+   culling, the voice limit, the variant pick and jitter: bank key, rate, gain, low-pass, bus, world position, panner
+   falloff, HRTF), every named level ramp (master, buses, ambience duck, beds, space mix, wind gusts), bed start offsets,
+   space / hearth changes and the listener pose (camera) every frame. The segment's setup starts the sound like the first
+   click of a player and waits until every sample is decoded; its RNG and ambience timers are reset after setup, so a
+   capture is reproducible. The game's own master is set to 100 % (`l3d.vol.master=1`) — the fixed video mix level.
+2. **Audio pass.** `render.mjs` runs each segment once more with rendering off (`fast(true)`) — the simulation is the
+   frame pass's, frame for frame (between two frames the page always gets a macrotask turn, so room loads settle on the
+   same frame whether frames are rendered one by one or fast-forwarded) — and writes `audio.json` (+ marks, `t0` = the
+   virtual time of frame 0).
+3. **Render.** `audio.mjs` loads `video/bundle/audio.js` (the game's `src/audio` bank + engine) in headless Chrome and
+   calls `SoundEngine.replay(log)` on an OfflineAudioContext at 48 kHz stereo: the same node chain, panners, reverb,
+   limiter — no decisions of its own. It renders from the engine's creation (beds and ramps settled) and keeps exactly
+   the segment's frames.
+4. **Join + master** (video-audio rules): the segment WAVs are joined with the same crossfades as the picture, the whole
+   mix gets ONE static gain to −16 LUFS integrated + a limiter; the true peak is measured on the ENCODED AAC and the
+   ceiling lowered until ≤ −1 dBTP; the video stream is copied, never re-encoded.
+
+**Narration** stays separate and optional: `.markers.json` → `narration.slots` (start, ≤ 6 s, suggested line,
+checked not to sit within 0.6 s of the coins / stone break / door) — `narration.mjs` ducks the game sound by 4–6 dB
+(`--duck=5`) under each clip and re-masters the sum.

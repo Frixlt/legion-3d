@@ -3,8 +3,9 @@
  *  - one compact card top-right (under the «онлайн» chip): mine · floor · nature · 👥/⛏, «Сейчас» (the stone being
  *    dug with its bar, «Стоп»), earnings (coins + ore, «Скупщик»), today's time and mastery as two hairline meters.
  *    The card collapses to its header line (button or [L]+Shift… no: the ▾ button; state kept in localStorage).
- *  - the journal is hidden behind [L] / the «Журнал» button: a drawer with tabs «Журнал» (hero stats + mine log)
- *    and «Чат шахты» (the mine room's chat: lines + input; incoming lines are also bubbles over the miners).
+ *  - the journal is hidden behind [L] / the «Журнал» button: a drawer with the hero stats + mine log. The mine chat is
+ *    NOT here any more: it is the «⛏ Шахта» tab of the bottom-left chat dock (src/ui/chat.ts, attachMineChat); incoming
+ *    lines are also bubbles over the miners.
  *  - tips, «+руда» popups over the dug stone, the «other tab» / «dark» notices, and the NPC cards: buyer «Скупщик
  *    Гром», supplier «Снабженец Кремень» / «Фонарщик», board «Поручения».
  * Re-renders only the parts whose HTML changed (buttons are not recreated under the cursor).
@@ -110,7 +111,7 @@ export interface MineHudHandlers {
   typing?(on: boolean): void;
 }
 export type CardKind = 'buy' | 'lamp' | 'quests' | null;
-type JTab = 'log' | 'chat';
+type JTab = 'log';
 const LS_MIN = 'l3d.mineHudMin';
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* */ } };
@@ -125,10 +126,8 @@ export class MineHud {
   private pops: { el: HTMLElement; x: number; y: number; z: number; t: number }[] = [];
   /** Card collapsed to its header line. */
   min = lsGet(LS_MIN) === '1';
-  /** Journal drawer: closed / log / chat. */
+  /** Journal drawer: closed / log. */
   jr: JTab | null = null;
-  private unread = 0;
-  private input: HTMLInputElement;
   private typingOn = false;
   /** The idle hint shows for the first 90 s in the mine or until the first stone. */
   private born = Date.now(); private dug = false;
@@ -136,8 +135,7 @@ export class MineHud {
     this.el = document.createElement('div'); this.el.className = 'l3m'; this.el.setAttribute('aria-live', 'polite');
     this.el.innerHTML = `<style>${CSS}</style>`
       + `<section class="l3m-box l3m-hud" data-p0="hud" aria-label="Шахта"><div data-p="hd"></div><div class="l3m-mbar" data-p="mbar"></div><div class="l3m-bd" data-p="bd"></div></section>`
-      + `<section class="l3m-box l3m-jr" data-p0="jr" hidden aria-label="Журнал шахты"><div class="tabs" data-p="jtabs"></div><div class="body" data-p="jbody"></div>`
-      + `<form class="l3m-in" data-p0="jin" hidden><input type="text" maxlength="200" placeholder="Написать в чат шахты…" autocomplete="off" spellcheck="false" aria-label="Сообщение в чат шахты"><button type="submit" class="l3m-btn sm">Отпр.</button></form></section>`
+      + `<section class="l3m-box l3m-jr" data-p0="jr" hidden aria-label="Журнал шахты"><div class="tabs" data-p="jtabs"></div><div class="body" data-p="jbody"></div></section>`
       + `<div class="l3m-other" data-p="other" hidden><span>Шахта открыта в другой вкладке — копать можно только в одной.</span><button type="button" class="l3m-btn sm" data-a="here">Копать здесь</button></div>`
       + `<div class="l3m-dark" data-p="dark" hidden>${esc(TX.dark)}</div>`
       + `<div class="l3m-tip" data-p="tip" hidden></div><div class="l3m-pops" data-p="pops"></div><div data-p="modal"></div>`;
@@ -146,21 +144,10 @@ export class MineHud {
     this.el.addEventListener('change', (e) => { const t = e.target as HTMLInputElement; if (t && t.dataset.use) { if (t.checked) this.noUse.delete(t.dataset.use); else this.noUse.add(t.dataset.use); this.render(); } });
     // the wheel over our panels scrolls them, not the camera
     this.el.addEventListener('wheel', (e) => { if ((e.target as HTMLElement).closest('.l3m-jr,.l3m-win')) e.stopPropagation(); }, { passive: true });
-    // mine chat input: game keys never fire while typing; Esc / Enter leave it
-    this.input = this.el.querySelector('.l3m-in input') as HTMLInputElement;
-    const form = this.el.querySelector('.l3m-in') as HTMLFormElement;
-    form.addEventListener('submit', (e) => { e.preventDefault(); void this.send(); });
-    for (const t of ['keydown', 'keyup', 'keypress'] as const) this.input.addEventListener(t, (e) => {
-      e.stopPropagation();
-      if (t === 'keydown' && (e as KeyboardEvent).key === 'Escape') { e.preventDefault(); this.input.blur(); }
-    });
-    this.input.addEventListener('focus', () => this.setTyping(true));
-    this.input.addEventListener('blur', () => this.setTyping(false));
   }
   private q<T extends HTMLElement = HTMLElement>(p: string): T { return this.el.querySelector(`[data-p="${p}"]`) as T; }
   private q0<T extends HTMLElement = HTMLElement>(p: string): T { return this.el.querySelector(`[data-p0="${p}"]`) as T; }
   private set(p: string, html: string): void { if (this.parts[p] === html) return; this.parts[p] = html; this.q(p).innerHTML = html; }
-  private setTyping(on: boolean): void { if (on === this.typingOn) return; this.typingOn = on; this.h.typing?.(on); }
   get typing(): boolean { return this.typingOn; }
 
   tip(text: string, bad = false): void {
@@ -192,19 +179,10 @@ export class MineHud {
     const was = !!this.jr;
     this.jr = tab === 'toggle' ? (this.jr ? null : 'log') : tab;
     if (!!this.jr !== was) this.h.journal?.(!!this.jr);
-    if (this.jr === 'chat') this.unread = 0;
-    if (!this.jr && this.typingOn) this.input.blur();
     this.render();
   }
-  /** Focus the mine chat input (opens the chat tab). */
-  focusChat(): void { this.journal('chat'); setTimeout(() => this.input.focus(), 0); }
-  /** New mine chat lines arrived (the room also shows them as bubbles). */
-  chatIn(lines: ChatLine[]): void { if (this.jr !== 'chat') this.unread = Math.min(99, this.unread + lines.length); this.render(); }
-  private async send(): Promise<void> {
-    const t = this.input.value.trim(); if (!t) { this.input.blur(); return; }
-    this.input.value = '';
-    try { const r = await this.client.say(t); if (r && r.ok === false) this.tip(r.error || 'Сообщение не отправлено', true); } catch { this.tip('Сообщение не отправлено', true); }
-  }
+  /** New mine chat lines arrived: the bottom-left chat dock shows them (and the room draws bubbles over the miners); nothing to do here. */
+  chatIn(_lines: ChatLine[]): void { /* the chat lives in the dock */ }
 
   /** Re-render from the client state (cheap: compares strings). */
   render(): void {
@@ -219,7 +197,7 @@ export class MineHud {
     this.set('hd', `<div class="l3m-hd" data-a="min" title="${this.min ? 'Развернуть' : 'Свернуть'}"><div class="g"><span class="t">⛏ ${esc(name)} · этаж ${st.n}</span>`
       + `<span class="s" title="${left > 0 ? `Новая шахта через ${dd ? dd + ' д ' : ''}${hh} ч` : ''}">${stars(st.danger || 1)} ${esc(BIO_RU[st.biome || ''] || '')}${(st.rec || 0) > st.n ? ` · рекорд ${st.rec}` : ''}`
       + ` · <span title="${M.hm ? `Были в шахте за последние ${M.hm} мин` : 'Сейчас в шахте'}">👥 ${all}</span> · <span title="Сейчас копают">⛏ ${w}</span></span></div>`
-      + `<button type="button" class="l3m-btn ghost sm l3m-jb" data-a="jr" title="Журнал и чат шахты [L]"><span class="l3m-kc">L</span>${this.unread ? `<span class="l3m-dot">${this.unread}</span>` : ''}</button>`
+      + `<button type="button" class="l3m-btn ghost sm l3m-jb" data-a="jr" title="Журнал шахты [L]"><span class="l3m-kc">L</span></button>`
       + `<button type="button" class="l3m-tg" data-a="min" aria-label="${this.min ? 'Развернуть' : 'Свернуть'}" aria-expanded="${!this.min}">▾</button></div>`);
     // Сейчас
     const dig = M.myI >= 0 && M.F ? M.F.cells[M.myI] : null;
@@ -250,27 +228,18 @@ export class MineHud {
     this.set('bd', nowH + earnH + metH + ftH);
     // journal drawer
     const jr = this.q0('jr'); jr.hidden = !jrOpen;
-    (this.q0('jin') as HTMLElement).hidden = this.jr !== 'chat';
     if (jrOpen) {
-      this.set('jtabs', `<button type="button" role="tab" data-a="jtab" data-tab="log" aria-selected="${this.jr === 'log'}">Журнал</button>`
-        + `<button type="button" role="tab" data-a="jtab" data-tab="chat" aria-selected="${this.jr === 'chat'}">Чат шахты${this.unread ? ` <span class="l3m-dot">${this.unread}</span>` : ''}</button>`
+      this.set('jtabs', `<button type="button" role="tab" data-a="jtab" data-tab="log" aria-selected="true">Журнал</button>`
         + `<button type="button" class="x" data-a="jr" aria-label="Закрыть журнал" title="Закрыть [L]">✕</button>`);
-      if (this.jr === 'log') {
-        const lamp = M.lampOn() ? 'надета' : M.lampHave() ? 'в сумке' : 'нет';
-        this.set('jbody', `<dl class="l3m-stats">`
-          + `<div><dt>Вклад за неделю</dt><dd>${me.wk || 0}</dd></div>`
-          + `<div><dt>Каска шахтёра</dt><dd class="${M.lampOn() ? 'ok' : ''}">${lamp}</dd></div>`
-          + `<div><dt>${TX.mast}</dt><dd>ур. ${mxx.lv} <small class="l3m-mut">${mxx.xp} / ${mxx.need}</small></dd></div>`
-          + `<div><dt>Сегодня</dt><dd>${mmss(me.day)}${me.cap > 0 ? ` <small class="l3m-mut">из ${mmss(me.cap)}</small>` : ''}</dd></div>`
-          + (st.gem ? `<div style="grid-column:1/3"><dt>Самоцвет этих мест</dt><dd>${esc(resName(st.gem))}</dd></div>` : '')
-          + (ore.length ? `<div style="grid-column:1/3"><dt>Руда в сумке</dt><dd>${ore.map((it) => `${esc(resName(it.res))} ${esc(qty(Math.floor(it.q / 100), it.q % 100))}`).join(', ')}</dd></div>` : '')
-          + `</dl><div class="l3m-k">Журнал шахты</div><ul class="l3m-log">${(st.log || []).slice(0, 12).map((e) => `<li>${esc(e.t)}</li>`).join('') || '<li>Пока тихо</li>'}</ul>`);
-      } else {
-        const lines = c.chat.lines.slice(-40), meL = c.login;
-        const body = this.q('jbody'), stick = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
-        this.set('jbody', `<div class="l3m-chat">${lines.map((l) => `<div class="ln${String(l.l).toLowerCase() === meL ? ' me' : ''}"><b style="color:${nick(l.l)}">${esc(l.n || l.l)}</b>${esc(l.t)}</div>`).join('') || `<div class="empty">${c.chat.on ? 'В шахте пока тихо — напиши первым.' : 'Чат шахты недоступен.'}</div>`}</div>`);
-        if (stick) body.scrollTop = body.scrollHeight;
-      }
+      const lamp = M.lampOn() ? 'надета' : M.lampHave() ? 'в сумке' : 'нет';
+      this.set('jbody', `<dl class="l3m-stats">`
+        + `<div><dt>Вклад за неделю</dt><dd>${me.wk || 0}</dd></div>`
+        + `<div><dt>Каска шахтёра</dt><dd class="${M.lampOn() ? 'ok' : ''}">${lamp}</dd></div>`
+        + `<div><dt>${TX.mast}</dt><dd>ур. ${mxx.lv} <small class="l3m-mut">${mxx.xp} / ${mxx.need}</small></dd></div>`
+        + `<div><dt>Сегодня</dt><dd>${mmss(me.day)}${me.cap > 0 ? ` <small class="l3m-mut">из ${mmss(me.cap)}</small>` : ''}</dd></div>`
+        + (st.gem ? `<div style="grid-column:1/3"><dt>Самоцвет этих мест</dt><dd>${esc(resName(st.gem))}</dd></div>` : '')
+        + (ore.length ? `<div style="grid-column:1/3"><dt>Руда в сумке</dt><dd>${ore.map((it) => `${esc(resName(it.res))} ${esc(qty(Math.floor(it.q / 100), it.q % 100))}`).join(', ')}</dd></div>` : '')
+        + `</dl><p class="l3m-mut">💬 Чат шахты — внизу слева</p><div class="l3m-k">Журнал шахты</div><ul class="l3m-log">${(st.log || []).slice(0, 12).map((e) => `<li>${esc(e.t)}</li>`).join('') || '<li>Пока тихо</li>'}</ul>`);
     }
     this.q('other').hidden = !c.other;
     this.q('dark').hidden = !M.dark;
@@ -377,7 +346,7 @@ export class MineHud {
       case 'orebag': void c.oreBag().then(() => this.render()); this.render(); break;
     }
   }
-  dispose(): void { clearTimeout(this.tipT); if (this.card) this.h.modal(false); if (this.jr) this.h.journal?.(false); if (this.typingOn) this.setTyping(false); this.el.remove(); }
+  dispose(): void { clearTimeout(this.tipT); if (this.card) this.h.modal(false); if (this.jr) this.h.journal?.(false); this.el.remove(); }
 }
 
 /** Price with discounts — as minecore.pickPay (the game computes the same). */
@@ -391,7 +360,3 @@ export function pickPay(s: Record<string, number>, opt: Record<string, [string, 
   }
   return { s: out, used };
 }
-
-/** Per-nick colour (same FNV-1a + palette as the site chat / src/ui chat). */
-const NICK = ['#ffc94d', '#ff8a80', '#ffab6e', '#f4ff81', '#b9f6ca', '#69f0ae', '#84ffff', '#80d8ff', '#9fa8ff', '#b388ff', '#ea80fc', '#ff80ab', '#ffd180', '#a7ffeb', '#ccff90', '#ffcdd2'];
-function nick(l: string): string { let x = 2166136261; const t = String(l || ''); for (let i = 0; i < t.length; i++) { x ^= t.charCodeAt(i); x = Math.imul(x, 16777619); } return NICK[(x >>> 0) % NICK.length]; }

@@ -5,6 +5,8 @@
  *   RenderPass → HDR half-float target (MSAA ×4 when the context has antialias at q3)
  *   UnrealBloomPass at QUARTER res (its mip chain starts at half of what it is given; we give it half)
  *   OutputPass (tone mapping + sRGB) with the grade and vignette folded into its shader — no extra full-screen pass.
+ *   Target outline (outline.ts): OutlineMaskPass after the RenderPass (only while something is targeted; reads the
+ *   scene depth texture of the HDR target) + edge/composite folded into the OutputPass shader as well.
  * The engine owns sizing: setSize(w, h, pixelRatio) follows dynamic resolution scaling.
  */
 import * as THREE from 'three';
@@ -12,6 +14,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { OutlineMaskPass, OUTLINE_GLSL, OUTLINE_GLSL_HEAD, outlineUniforms } from './outline';
 
 export interface PostOptions {
   /** Bloom strength (0 = off). */
@@ -86,10 +89,12 @@ export class PostChain {
   private readonly output: OutputPass;
   private readonly renderPass: RenderPass;
   private readonly target: THREE.WebGLRenderTarget;
+  private readonly outline: OutlineMaskPass;
 
   constructor(private renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, msaa: number, o: PostOptions = {}) {
     const p = { ...POST_DEFAULTS, ...o };
-    this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: msaa });
+    // depth as a texture (resolved from MSAA): the outline mask tests the target against it (x-ray of hidden parts)
+    this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: msaa, depthTexture: new THREE.DepthTexture(1, 1) });
     this.composer = new EffectComposer(renderer, this.target);
     this.renderPass = new RenderPass(scene, camera);
     this.bloom = new CheapBloomPass(new THREE.Vector2(256, 256), p.bloom, p.radius, p.threshold);
@@ -102,12 +107,16 @@ export class PostChain {
     const u = this.output.uniforms as Record<string, THREE.IUniform>;
     u.uVignette = { value: p.vignette };
     u.uWarm = { value: p.warm };
+    Object.assign(u, outlineUniforms);
     const m = this.output.material as THREE.RawShaderMaterial;
     m.fragmentShader = m.fragmentShader
-      .replace('varying vec2 vUv;', 'varying vec2 vUv;\nuniform float uVignette;\nuniform float uWarm;')
-      .replace('// color space', GRADE_GLSL);
+      .replace('varying vec2 vUv;', 'varying vec2 vUv;\nuniform float uVignette;\nuniform float uWarm;\n' + OUTLINE_GLSL_HEAD)
+      .replace('// color space', GRADE_GLSL)
+      .replace('// color space', OUTLINE_GLSL);
     m.needsUpdate = true;
+    this.outline = new OutlineMaskPass(camera);
     this.composer.addPass(this.renderPass);
+    this.composer.addPass(this.outline);
     if (p.bloom > 0) this.composer.addPass(this.bloom);
     this.composer.addPass(this.output);
   }
@@ -133,7 +142,7 @@ export class PostChain {
   render(dt: number): void { this.composer.render(dt); }
 
   dispose(): void {
-    this.bloom.dispose(); this.output.dispose(); this.renderPass.dispose();
+    this.outline.dispose(); this.bloom.dispose(); this.output.dispose(); this.renderPass.dispose();
     this.composer.dispose(); this.target.dispose();
   }
 }

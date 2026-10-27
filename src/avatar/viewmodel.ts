@@ -13,9 +13,10 @@ import * as THREE from 'three';
 import type { Appearance } from '../contracts';
 import type { ViewModel } from '../contracts/modules';
 import { Parts, T, mul, sphere, tube, torus, box, cyl, cone, capsule } from './geom';
-import { addWeapon, addShield, weaponHold } from './gear';
+import { addWeapon, addShield, weaponHold, bladeSpan } from './gear';
 import { toonMat, outlineMat } from './materials';
 import { RARITY_COLOR } from './appearance';
+import { easeK } from './attacks';
 
 const W_CLOTH: Record<string, string> = { common: '#8a7a62', uncommon: '#3f6fb0', rare: '#2f58a8', epic: '#5a2fa8', legendary: '#7a1f3a' };
 const SLEEVE: Record<string, (r: string) => string> = {
@@ -33,6 +34,10 @@ const KIND: Record<string, Kind> = {
   staff: 'pole', crook: 'pole', skullstaff: 'pole', spear: 'spear', pitchfork: 'spear',
   bow: 'bow', grimoire: 'book', censer: 'censer',
 };
+/** Weapon family of a weapon look (how it is held and swung); 'none' when unarmed. Unknown looks swing like a blade. */
+export function weaponFamily(w: string | undefined | null): Kind { return w ? KIND[w] || 'blade' : 'none'; }
+export type WeaponFamily = Kind;
+
 /** Size of the held weapon in view-model space (weapon geometry is in character metres). */
 const WSCALE: Record<string, number> = { dagger: 0.64, kris: 0.6, gladius: 0.56, sword: 0.5, axe: 0.5, club: 0.5, mace: 0.5, hammer: 0.48, holymace: 0.48, staff: 0.44, crook: 0.44, skullstaff: 0.44, spear: 0.44, pitchfork: 0.44, bow: 0.48, grimoire: 0.46, censer: 0.52 };
 
@@ -68,31 +73,44 @@ export const VM_TUNE = {
   bow: { yaw: 0, cant: 0, size: 1 },
   /** forearm direction in paw space (x mirrored for the left paw): from the paw down/back towards the screen corner */
   arm: { def: [0.09, -0.22, 0.19] as [number, number, number], bow: [0.28, -0.12, 0.18] as [number, number, number] },
+  /** the free left paw pulling the bow string (src/combat draw) */
+  pull: [0.12, -0.36, -0.44, 0.5, 0.35, -0.9] as Pose,
 };
 const PARRY_R: Pose = [0.18, -0.4, -0.5, -0.2, -0.2, 1.35];
 
-/** Swing keyframes per family: [time s, dx, dy, dz, drx, dry, drz] offsets from the rest pose. */
-type Key = readonly [number, number, number, number, number, number, number];
+/**
+ * Swing keyframes per family: [time s, dx, dy, dz, drx, dry, drz, ease?] offsets from the rest pose; `ease` of the
+ * segment ending at the key (attacks.ts easeK: 0 smooth, 1 in, 2 out, 3 linear, 4 back). Same timing as the TP tracks
+ * (attacks.ts): wind-up → anticipation hold → fast strike (contact = TP_CONTACT) → follow-through → settle.
+ */
+type Key = readonly number[];
 const SW_SLASH: readonly Key[] = [
   [0, 0, 0, 0, 0, 0, 0],
-  [0.12, 0.1, 0.12, 0.03, 0.55, 0.15, -0.55],
-  [0.25, -0.42, -0.2, -0.06, -0.85, 0.25, 1.05],
-  [0.32, -0.46, -0.24, -0.05, -0.9, 0.25, 1.1],
-  [0.56, 0, 0, 0, 0, 0, 0],
+  [0.09, 0.16, 0.2, 0.06, 0.95, 0.3, -0.85, 2],             // wind-up: up and back over the right shoulder
+  [0.19, 0.175, 0.22, 0.07, 1.05, 0.34, -0.92],             // hold
+  [0.225, -0.1, 0.0, -0.03, -0.15, 0.25, 0.3, 1],          // arc
+  [0.255, -0.4, -0.18, -0.06, -0.85, 0.25, 1.05, 3],       // contact: wrist snap
+  [0.36, -0.44, -0.24, -0.05, -0.98, 0.25, 1.15, 2],       // follow-through (stays on screen)
+  [0.47, -0.4, -0.22, -0.05, -0.9, 0.22, 1.05, 4],
+  [0.74, 0, 0, 0, 0, 0, 0],
 ];
 const SW_SMASH: readonly Key[] = [
   [0, 0, 0, 0, 0, 0, 0],
-  [0.16, 0.04, 0.2, 0.06, 0.95, 0, -0.2],
-  [0.3, -0.18, -0.22, -0.06, -0.9, 0.1, 0.45],
-  [0.38, -0.2, -0.24, -0.05, -0.95, 0.1, 0.45],
-  [0.66, 0, 0, 0, 0, 0, 0],
+  [0.12, 0.04, 0.2, 0.06, 0.95, 0, -0.2, 2],
+  [0.22, 0.045, 0.24, 0.07, 1.08, 0, -0.22],               // hold at the top
+  [0.26, -0.06, 0.05, -0.01, 0.1, 0.05, 0.1, 1],
+  [0.29, -0.18, -0.24, -0.06, -0.95, 0.1, 0.45, 1],        // SLAM
+  [0.42, -0.2, -0.25, -0.05, -0.98, 0.1, 0.45, 2],
+  [0.52, -0.1, -0.1, -0.02, -0.4, 0.05, 0.2],
+  [0.74, 0, 0, 0, 0, 0, 0],
 ];
 const SW_THRUST: readonly Key[] = [
   [0, 0, 0, 0, 0, 0, 0],
-  [0.1, 0.03, -0.03, 0.06, 0.12, 0, 0],
-  [0.2, -0.12, 0.08, -0.14, -0.3, 0, -0.05],
-  [0.3, -0.12, 0.08, -0.13, -0.3, 0, -0.05],
-  [0.52, 0, 0, 0, 0, 0, 0],
+  [0.1, 0.03, -0.03, 0.07, 0.14, 0, 0, 2],
+  [0.2, 0.035, -0.035, 0.085, 0.17, 0, 0],                 // hold (coiled)
+  [0.245, -0.12, 0.08, -0.16, -0.3, 0, -0.05, 1],          // lunge
+  [0.33, -0.12, 0.08, -0.15, -0.3, 0, -0.05, 2],
+  [0.58, 0, 0, 0, 0, 0, 0],
 ];
 const SW_CAST: readonly Key[] = [
   [0, 0, 0, 0, 0, 0, 0],
@@ -205,6 +223,10 @@ class ViewModelImpl implements ViewModel {
   /** Extra idle drop for tall shields (the scutum), so every shield peeks in by about the same strip. */
   private shieldDrop = 0;
   private swingT = -1; private swingCD = 0;
+  private drawT = 0; private drawAmt = 0; private stopT = 0;
+  private nock: THREE.Object3D | null = null;
+  /** Time since the bow was loosed (−1 = not recently): the paw kicks up and the bow wobbles. */
+  private relT = -1;
   private bobPh = 0; private walk = 0; private t = 0;
   private swayX = 0; private swayY = 0; private swayVX = 0; private swayVY = 0;
   private blockOn = false; private blockAmt = 0;
@@ -212,6 +234,9 @@ class ViewModelImpl implements ViewModel {
   private pendA = 0; private pendV = 0; private pendB = 0; private pendBV = 0;
   private key = '';
   private weapon: THREE.Mesh | null = null;
+  /** Swing trail: the striking edge in the space of `bladeObj` (weapon mesh, or the right paw when unarmed). */
+  private bladeObj: THREE.Object3D | null = null;
+  private bladeA = new THREE.Vector3(); private bladeB = new THREE.Vector3();
   private aspect = ASPECT_REF;
 
   constructor(app: Appearance) {
@@ -236,6 +261,7 @@ class ViewModelImpl implements ViewModel {
     const first = this.key === '';
     this.key = key;
     for (const m of this.meshes) m.removeFromParent();
+    if (this.nock) { this.nock.removeFromParent(); this.nock = null; }
     for (const ge of this.geos) ge.dispose();
     this.meshes = []; this.geos = [];
     const fur = l.color || '#f2a65a';
@@ -295,8 +321,17 @@ class ViewModelImpl implements ViewModel {
     if (g.w) {
       const ws = WSCALE[g.w] ?? 0.6;
       const pw = new Parts();
-      if (kind === 'bow') addVmBow(pw, g.wr);   // a chunkier view-model bow, built around the fist
-      else {
+      if (kind === 'bow') {
+        addVmBow(pw, g.wr);   // a chunkier view-model bow, built around the fist
+        // the nocked arrow (src/combat: hold LMB to draw): shown only while drawing, slides back with the draw
+        const pa = new Parts(), d = 0.078 * VM_TUNE.bow.size;
+        pa.add(cyl(0.0032, 0.0032, 0.3, 5), '#d9b07a', T(-0.01, 0.006, d * 0.74 - 0.15, Math.PI / 2, 0, 0));
+        pa.add(cone(0.009, 0.03, 4), '#c9d2da', T(-0.01, 0.006, d * 0.74 - 0.315, -Math.PI / 2, 0, 0));
+        for (const a of [0, Math.PI * 2 / 3, Math.PI * 4 / 3]) pa.add(box(0.0015, 0.012, 0.036), '#ff7fa0', T(-0.01 + Math.cos(a) * 0.006, 0.006 + Math.sin(a) * 0.006, d * 0.74 - 0.02, 0, 0, a));
+        const ng = new THREE.Group(); ng.name = 'vm-nock'; ng.visible = false;
+        this.right.add(ng); this.mk(pa.build(), ng, 'vm-nock');
+        this.nock = ng;
+      } else {
         // hand-space offset × size × the canonical hold shared with the third-person body (gear.ts weaponHold)
         const off = kind === 'censer' ? T(0, -0.036, 0, 0, 0, 0, ws)
           : kind === 'book' ? T(0, -0.01, 0, 0, 0, 0, ws)
@@ -304,6 +339,8 @@ class ViewModelImpl implements ViewModel {
               : T(0, -0.005, -0.005, 0, 0, 0, ws);
         const m = mul(off, weaponHold(g.w));
         addWeapon(pw, g.w, g.wr, m);
+        const span = bladeSpan(g.w);
+        if (span) { this.bladeA.set(0, span[0], 0).applyMatrix4(m); this.bladeB.set(0, span[1], 0).applyMatrix4(m); }
         if (kind === 'censer') {
           // a chunky chain from the fist to the lid (the third-person chain is a hairline at this distance)
           const CH = '#c9b98a';
@@ -311,7 +348,14 @@ class ViewModelImpl implements ViewModel {
         }
       }
       this.weapon = this.mk(pw.build(), kind === 'censer' ? this.pend : this.right, 'vm-weapon');
-    } else this.weapon = null;
+      this.bladeObj = kind === 'bow' || kind === 'censer' || kind === 'book' ? null : this.weapon;
+    } else {
+      this.weapon = null;
+      // bare paw: a short streak through the paw along the forearm
+      const ax = new THREE.Vector3(VM_TUNE.arm.def[0], VM_TUNE.arm.def[1], VM_TUNE.arm.def[2]).normalize();
+      this.bladeA.copy(ax).multiplyScalar(0.03); this.bladeB.copy(ax).multiplyScalar(-0.045);
+      this.bladeObj = this.right;
+    }
     // left: shield on the forearm, or the bare paw
     const pl = new Parts();
     if (this.hasShield) {
@@ -393,19 +437,41 @@ class ViewModelImpl implements ViewModel {
       dx += (pr[0] - rest[0]) * -z * TAN_REF * this.aspect * b; dy += (pr[1] - rest[1]) * -z * TAN_REF * b;
       rx += (pr[3] - rest[3]) * b; ry += (pr[4] - rest[4]) * b; rz += (pr[5] - rest[5]) * b;
     }
+    if (this.stopT > 0) this.stopT -= dt;
     if (this.swingT >= 0) {
-      this.swingT += dt;
+      this.swingT += this.stopT > 0 ? dt * 0.06 : dt;
       const keys = SWINGS[kind], end = keys[keys.length - 1][0];
       if (this.swingT >= end) this.swingT = -1;
       else {
         let i = 0; while (i < keys.length - 2 && this.swingT > keys[i + 1][0]) i++;
-        const a = keys[i], b = keys[i + 1], q = smooth((this.swingT - a[0]) / (b[0] - a[0]));
+        const a = keys[i], b = keys[i + 1], q = easeK(b[7] ?? 0, clamp((this.swingT - a[0]) / (b[0] - a[0]), 0, 1));
         dx += a[1] + (b[1] - a[1]) * q; dy += a[2] + (b[2] - a[2]) * q; dz += a[3] + (b[3] - a[3]) * q;
         rx += a[4] + (b[4] - a[4]) * q; ry += a[5] + (b[5] - a[5]) * q; rz += a[6] + (b[6] - a[6]) * q;
         if (kind === 'censer' && i === 1) this.pendV -= dt * 40;   // flick kicks the pendulum forward
       }
     }
-    rx += run * 0.45; dy -= run * 0.03; rz -= run * 0.15;
+    // bow draw (src/combat: hold LMB): raise to the aim pose of the draw track and hold; a tremble at full draw
+    const dT = this.drawT;
+    this.drawAmt += (dT - this.drawAmt) * Math.min(1, dt * (dT > this.drawAmt ? 9 : 24));
+    const da = smooth(clamp(this.drawAmt, 0, 1));
+    if (da > 0.001) {
+      const k = SW_DRAW[2], tr = dT > 0.97 ? Math.sin(t * 53) * 0.0016 : 0;
+      dx += k[1] * da + tr; dy += k[2] * da + tr * 0.7; dz += k[3] * da; rx += k[4] * da; ry += k[5] * da; rz += k[6] * da;
+    }
+    if (this.nock) {
+      this.nock.visible = dT > 0.02;
+      this.nock.position.z = 0.05 * clamp(dT, 0, 1);   // pulled back towards the camera
+    }
+    if (this.relT >= 0) {
+      this.relT += dt;
+      if (this.relT > 0.3) this.relT = -1;
+      else {
+        // release snap: the bow paw kicks up and forward, the bow wobbles, then settles
+        const r = 1 - this.relT / 0.3, r2 = r * r;
+        dy += 0.03 * r2; dz -= 0.025 * r2; rx -= 0.22 * r2; rz += Math.sin(this.relT * 60) * 0.06 * r2;
+      }
+    }
+    rx += run * 0.45 * (1 - da); dy -= run * 0.03; rz -= run * 0.15 * (1 - da);
     this.place(this.right, rest, dx, dy, dz, rx, ry, rz);
 
     // censer pendulum: driven by sway and bob (two axes, damped)
@@ -425,11 +491,42 @@ class ViewModelImpl implements ViewModel {
       L.rotation.set(a[3] + (k[3] - a[3]) * b + run * 0.3, a[4] + (k[4] - a[4]) * b, a[5] + (k[5] - a[5]) * b);
     } else {
       this.place(L, kind === 'none' ? VM_TUNE.lPawNone : VM_TUNE.lPaw, -bx * 0.8, by * 0.8 - Math.cos(this.bobPh) * 0.006 * wk, 0, run * 0.4, 0, Math.sin(t * 1.3) * 0.03);
+      if (da > 0.001 && kind === 'bow') {
+        // the free paw comes up to the string and pulls it back towards the cheek
+        const P = VM_TUNE.pull, pl = clamp(dT, 0, 1), z = P[2] + 0.05 * pl;
+        const px = P[0] * -z * TAN_REF * this.aspect, py = P[1] * -z * TAN_REF;
+        L.position.set(L.position.x + (px - L.position.x) * da, L.position.y + (py - L.position.y) * da, L.position.z + (z - L.position.z) * da);
+        L.rotation.set(L.rotation.x + (P[3] - L.rotation.x) * da, L.rotation.y + (P[4] - L.rotation.y) * da, L.rotation.z + (P[5] - L.rotation.z) * da);
+      }
     }
   }
 
+  /** World positions of the striking edge now (swing trail); false when there is none or the paws are hidden. */
+  bladeSeg(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const o = this.bladeObj;
+    if (!o || !this.root.visible || !this.root.parent) return false;
+    o.updateWorldMatrix(true, false);
+    a.copy(this.bladeA).applyMatrix4(o.matrixWorld); b.copy(this.bladeB).applyMatrix4(o.matrixWorld);
+    return true;
+  }
+  /** World position of the nocked arrow's head while drawing; false = not drawing. */
+  arrowTip(out: THREE.Vector3): boolean {
+    const n = this.nock;
+    if (!n || !n.visible || !this.root.visible) return false;
+    n.updateWorldMatrix(true, false);
+    out.set(-0.01, 0.006, 0.078 * VM_TUNE.bow.size * 0.74 - 0.33).applyMatrix4(n.matrixWorld);
+    return true;
+  }
+  /** Seconds since the current swing started (−1 = none). */
+  get swingTime(): number { return this.swingT; }
+  /** True when swing() would start a swing now. */
+  get swingReady(): boolean { return this.swingCD <= 0 && this.drawT <= 0; }
+  /** Bow draw (0 … 1; 0 = released). While drawing, swing() is ignored (the click is the draw). */
+  setDraw(k: number): void { if (k <= 0 && this.drawT > 0.15) this.relT = 0; this.drawT = clamp(k, 0, 1); }
+  /** Hit-stop: the swing nearly freezes for `sec`. */
+  hitStop(sec: number): void { this.stopT = Math.max(this.stopT, sec); }
   swing(): void {
-    if (this.swingCD > 0) return;
+    if (this.swingCD > 0 || this.drawT > 0) return;
     this.swingT = 0;
     const keys = SWINGS[this.kind];
     this.swingCD = keys[keys.length - 1][0] * 0.75;
@@ -449,5 +546,11 @@ class ViewModelImpl implements ViewModel {
 }
 
 /** The view-model with the optional extras (block) the integrator may use. */
-export type ViewModelEx = ViewModel & { block(on: boolean): void; readonly blocking: boolean };
+export type ViewModelEx = ViewModel & {
+  block(on: boolean): void; readonly blocking: boolean;
+  /** Combat hooks (src/combat): bow draw, hit-stop, swing readiness. */
+  setDraw?(k: number): void; hitStop?(sec: number): void; readonly swingReady?: boolean;
+  bladeSeg?(a: THREE.Vector3, b: THREE.Vector3): boolean;
+  arrowTip?(out: THREE.Vector3): boolean;
+};
 export function createViewModel(app: Appearance): ViewModelEx { return new ViewModelImpl(app); }

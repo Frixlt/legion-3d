@@ -25,3 +25,18 @@ describe('auto quality on a weak GPU', () => {
     expect(levelCapForGpu('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)')).toBe(2);
   });
 });
+
+describe('dynamic resolution does not ping-pong', () => {
+  it('backs off probing up when the step up immediately fails', () => {
+    const g = new AutoGovernor(1, 1); g.locked = true; g.reset(0);
+    // load: fine at scale ≤ 0.6, too slow above it
+    let t = 0, changes = 0;
+    g.scale = 0.6;
+    for (let i = 0; i < 60 * 180; i++) {
+      t += 1 / 60;
+      const ms = g.scale > 0.6 + 1e-3 ? 22 : 15;
+      if (g.sample(ms, t) === 'scale') changes++;
+    }
+    expect(changes).toBeLessThan(14);   // without back-off this flips every ~8 s (≈ 40 changes in 3 min)
+  });
+});

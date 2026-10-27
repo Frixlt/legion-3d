@@ -91,3 +91,6 @@ the dev host has `walkTo` (teleports). Tests: `npx vitest run test/ui-money.test
 The live site's city chat (`#tab-city .cy-chat`) is docked over the game by `chat.ts` (styled by `SITE_CHAT_CSS`),
 so tabs, DMs, moderation and future site changes come for free. Our own panel is only a fallback (offline demo,
 or when the site's chat element is missing).
+In the 3D mine both get a «⛏ Шахта» tab (`attachMineChat`, state in `MineChatTab`): its own list and field are inserted
+next to the site's (`.l3d-mine-l` / `.l3d-mine-f`, shown via `.l3d-mine-on` on the chat box) and re-attached by the
+0.5 s scan if the site rebuilt its DOM.

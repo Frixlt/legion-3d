@@ -1,0 +1,165 @@
+/** Halloween geometry (unit-sized, built once, shared by instancing): pumpkin, bat, ghost cat, hanging string. */
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
+const col = (g: THREE.BufferGeometry, r: number, gg: number, b: number, fn?: (x: number, y: number, z: number) => number) => {
+  const p = g.getAttribute('position'), c = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) { const k = fn ? fn(p.getX(i), p.getY(i), p.getZ(i)) : 1; c[i * 3] = r * k; c[i * 3 + 1] = gg * k; c[i * 3 + 2] = b * k; }
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return g;
+};
+const strip = (g: THREE.BufferGeometry, keep: string[]) => {
+  for (const n of Object.keys(g.attributes)) if (!keep.includes(n)) g.deleteAttribute(n);
+  return g;
+};
+
+/**
+ * A squat ribbed pumpkin of radius 1 (6 ribs, flattened to 0.78 high, dimpled poles) with a stalk and two little cat ears.
+ * Vertex colours: warm orange with darker rib valleys; stalk green-brown. UVs: the sphere's (a face texture maps at
+ * u = .25 → +Z, u = .75 → −Z); the stalk's UVs sit at (0,0), the black corner of the emission map.
+ */
+export function pumpkinGeometry(): THREE.BufferGeometry {
+  const body = new THREE.SphereGeometry(1, 12, 7);
+  const p = body.getAttribute('position'), c = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const th = Math.atan2(z, x), rib = Math.cos(th * 6);                    // +1 on a rib crest, −1 in a valley
+    const h = Math.sqrt(x * x + z * z), k = 1 + 0.055 * rib * Math.min(1, h * 1.3);
+    x *= k; z *= k;
+    const pole = Math.max(0, Math.abs(y) - 0.86) / 0.14;                    // 0..1 within the polar cap
+    y = y * 0.78 - Math.sign(y) * 0.1 * pole * pole;                        // dimple
+    p.setXYZ(i, x, y, z);
+    const shade = 0.9 + 0.1 * rib * Math.min(1, h * 1.4) - 0.1 * Math.max(0, -p.getY(i) - 0.5);
+    c[i * 3] = 1.0 * shade; c[i * 3 + 1] = 0.42 * shade; c[i * 3 + 2] = 0.05 * shade;
+  }
+  body.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  body.computeVertexNormals();
+  const stalk = new THREE.CylinderGeometry(0.1, 0.17, 0.3, 6, 1);
+  stalk.scale(0.8, 0.8, 0.8); stalk.translate(0, 0.12, 0); stalk.rotateZ(-0.22); stalk.translate(0.0, 0.64, 0);
+  const sp = stalk.getAttribute('position'), su = new Float32Array(sp.count * 2);   // all (0,0)
+  stalk.setAttribute('uv', new THREE.BufferAttribute(su, 2));
+  col(stalk, 0.36, 0.52, 0.2, (_x, y) => 0.8 + 0.4 * Math.min(1, (y - 0.64) / 0.25));
+  // little cat ears on the shoulders (the city is a cat town): two 4-sided cones leaning outwards
+  const ears = [-1, 1].map((sx) => {
+    const e = new THREE.ConeGeometry(0.2, 0.36, 4, 1); e.rotateY(Math.PI / 4); e.scale(1, 1, 0.55);
+    e.rotateZ(-sx * 0.38); e.translate(sx * 0.46, 0.58, -0.02);
+    e.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(e.getAttribute('position').count * 2), 2));
+    return col(e, 1.0, 0.4, 0.05, (_x, y) => 0.8 + 0.3 * Math.min(1, Math.max(0, (y - 0.4) / 0.4)));
+  });
+  strip(body, ['position', 'normal', 'uv', 'color']); strip(stalk, ['position', 'normal', 'uv', 'color']); for (const e of ears) strip(e, ['position', 'normal', 'uv', 'color']);
+  const g = mergeGeometries([body.toNonIndexed(), stalk.toNonIndexed(), ...ears.map((e) => e.toNonIndexed())], false)!;
+  g.computeBoundingSphere();
+  return g;
+}
+
+/**
+ * A small bat, wing-span ≈ 0.6 m, flying along −Z. Flat double-sided wings (the flap is done in the vertex shader
+ * from |x|), a tiny body with ears. All at y = 0.
+ */
+export function batGeometry(): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const tri = (a: number[], b: number[], c: number[]) => pos.push(...a, ...b, ...c);
+  for (const s of [1, -1]) {
+    const R = [s * 0.04, 0, 0.01], A = [s * 0.07, 0, -0.09], B = [s * 0.34, 0.02, -0.07], C = [s * 0.25, 0, 0.05], D = [s * 0.17, 0, 0.0], E = [s * 0.12, 0, 0.1], F = [s * 0.05, 0, 0.08];
+    if (s > 0) { tri(R, A, B); tri(R, B, C); tri(R, C, D); tri(R, D, E); tri(R, E, F); }
+    else { tri(R, B, A); tri(R, C, B); tri(R, D, C); tri(R, E, D); tri(R, F, E); }
+  }
+  const wings = new THREE.BufferGeometry(); wings.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const body = new THREE.SphereGeometry(0.055, 6, 5); body.scale(1, 0.9, 1.5); body.translate(0, 0.0, 0.03);
+  const head = new THREE.SphereGeometry(0.04, 6, 4); head.translate(0, 0.012, -0.075);
+  const ears = [-1, 1].map((s) => { const e = new THREE.ConeGeometry(0.018, 0.06, 4); e.translate(s * 0.026, 0.07, -0.082); return e; });
+  const wp = wings.getAttribute('position'), wc = new Float32Array(wp.count * 3);
+  for (let i = 0; i < wp.count; i++) { const e = Math.min(1, Math.abs(wp.getX(i)) / 0.34); wc[i * 3] = 0.5 + 0.4 * e; wc[i * 3 + 1] = 0.3 + 0.22 * e; wc[i * 3 + 2] = 0.8 + 0.15 * e; }   // lilac, lighter at the tips
+  wings.setAttribute('color', new THREE.BufferAttribute(wc, 3));
+  col(body, 0.34, 0.22, 0.52); col(head, 0.38, 0.25, 0.58); for (const e of ears) col(e, 0.9, 0.55, 0.8);
+  const parts = [wings, body, head, ...ears].map((g) => strip(g.index ? g.toNonIndexed() : g, ['position', 'color']));
+  const g = mergeGeometries(parts, false)!;
+  g.computeBoundingSphere();
+  return g;
+}
+
+/**
+ * A ghost cat lantern ≈ 0.62 m tall: lathe body with a wavy hem, two pointed ears, big dark eyes, pink cheeks and a
+ * nose, facing +Z. Vertex colours only (drawn unlit, slightly translucent).
+ */
+export function ghostGeometry(): THREE.BufferGeometry {
+  const prof: THREE.Vector2[] = [];
+  const H = 0.62;
+  for (let i = 0; i <= 10; i++) {            // dome: from the top pole down to the widest point
+    const a = (i / 10) * (Math.PI / 2);
+    prof.push(new THREE.Vector2(Math.sin(a) * 0.27, H - 0.27 + Math.cos(a) * 0.27));
+  }
+  prof.push(new THREE.Vector2(0.27, 0.2), new THREE.Vector2(0.285, 0.06), new THREE.Vector2(0.3, 0.0));
+  prof.reverse();                            // lathe wants bottom → top for outward normals
+  const body = new THREE.LatheGeometry(prof, 12);
+  const p = body.getAttribute('position');
+  for (let i = 0; i < p.count; i++) {        // wavy hem
+    const y = p.getY(i);
+    if (y < 0.12) { const th = Math.atan2(p.getZ(i), p.getX(i)); p.setY(i, y + (0.05 * (Math.cos(th * 4) * 0.5 + 0.5)) * (1 - y / 0.12)); }
+  }
+  body.computeVertexNormals();
+  col(body, 0.93, 0.92, 1.0, (_x, y) => 0.82 + 0.18 * Math.min(1, y / H));
+  const ear = (s: number) => { const e = new THREE.ConeGeometry(0.095, 0.22, 4); e.rotateY(Math.PI / 4); e.rotateZ(-s * 0.3); e.translate(s * 0.16, H - 0.005, 0.0); return col(e, 0.97, 0.9, 1.0); };
+  const earIn = (s: number) => { const e = new THREE.ConeGeometry(0.058, 0.15, 4); e.rotateY(Math.PI / 4); e.rotateZ(-s * 0.3); e.translate(s * 0.16 + s * 0.004, H - 0.015, 0.05); return col(e, 1.0, 0.62, 0.8); };
+  const eye = (s: number) => { const e = new THREE.SphereGeometry(0.036, 8, 6); e.scale(0.85, 1.25, 0.5); e.translate(s * 0.095, 0.4, 0.255); return col(e, 0.08, 0.05, 0.16); };
+  const cheek = (s: number) => { const e = new THREE.SphereGeometry(0.04, 8, 5); e.scale(1.2, 0.7, 0.4); e.translate(s * 0.17, 0.32, 0.225); return col(e, 1.0, 0.55, 0.7); };
+  const nose = new THREE.SphereGeometry(0.018, 6, 4); nose.scale(1.2, 0.8, 0.6); nose.translate(0, 0.345, 0.27); col(nose, 1.0, 0.5, 0.65);
+  const mouthL = new THREE.TorusGeometry(0.024, 0.006, 4, 8, Math.PI); mouthL.rotateZ(Math.PI); mouthL.translate(-0.026, 0.31, 0.262); col(mouthL, 0.1, 0.06, 0.18);
+  const mouthR = mouthL.clone(); mouthR.translate(0.052, 0, 0);
+  const whisker = (s: number, k: number) => { const e = new THREE.BoxGeometry(0.15, 0.006, 0.006); e.rotateZ(s * k * 0.18); e.translate(s * 0.265, 0.325 + k * 0.025, 0.2); e.rotateY(-s * 0.35); return col(e, 0.55, 0.5, 0.75); };
+  const parts = [body, ear(-1), ear(1), earIn(-1), earIn(1), eye(-1), eye(1), cheek(-1), cheek(1), nose, mouthL, mouthR, whisker(-1, -1), whisker(-1, 1), whisker(1, -1), whisker(1, 1)].map((g) => strip(g.index ? g.toNonIndexed() : g, ['position', 'color']));
+  const g = mergeGeometries(parts, false)!;
+  g.computeBoundingSphere();
+  return g;
+}
+
+/** Unit quad lying on the ground (y = 0), facing up. */
+export const groundQuad = () => new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2);
+
+/** Unit quad in the XY plane facing +Z, origin at the bottom-left corner (cobweb: hangs from its top-left). */
+export const cornerQuad = () => { const g = new THREE.PlaneGeometry(1, 1); g.translate(0.5, -0.5, 0); return g; };
+
+/**
+ * Bunting along the garland cables: small shapes hanging from the cable points — orange pumpkins, white ghosts and
+ * purple / orange pennants, in turn. `cable` = flat x,y,z,x,y,z… segment list (LineSegments positions).
+ * Even-numbered shapes come first, so a prefix of the draw range is an evenly spaced part (`userData.cum[k]` = vertex
+ * count of the first k shapes). Attributes: position, color, aHang (0 at the cable, 1 at the tip: sways in the shader).
+ */
+export function buntingGeometry(cable: ArrayLike<number>, step = 0.8, max = 260): THREE.BufferGeometry {
+  const pts: { x: number; y: number; z: number; tx: number; tz: number }[] = [];
+  let acc = 0, px = NaN, py = NaN, pz = NaN;
+  for (let i = 0; i + 5 < cable.length; i += 6) {
+    const ax = cable[i], ay = cable[i + 1], az = cable[i + 2], bx = cable[i + 3], by = cable[i + 4], bz = cable[i + 5];
+    if (Math.hypot(ax - px, ay - py, az - pz) > 1e-3) acc = step * 0.5;               // a new span starts
+    const len = Math.hypot(bx - ax, by - ay, bz - az) || 1;
+    let d = step - acc;
+    while (d <= len) { const t = d / len; pts.push({ x: ax + (bx - ax) * t, y: ay + (by - ay) * t, z: az + (bz - az) * t, tx: (bx - ax) / len, tz: (bz - az) / len }); d += step; }
+    acc = len - (d - step); px = bx; py = by; pz = bz;
+  }
+  const order = [...pts.keys()].filter((i) => i % 2 === 0).concat([...pts.keys()].filter((i) => i % 2 === 1)).slice(0, max);
+  // shapes in (u along the cable, v down) metres, as triangle lists with a colour each
+  type Tri = [number, number, number, number, number, number];
+  const hexagon = (cx: number, cy: number, ru: number, rv: number): Tri[] => Array.from({ length: 6 }, (_, k) => { const a0 = (k / 6) * 6.2832, a1 = ((k + 1) / 6) * 6.2832; return [cx, cy, cx + Math.cos(a0) * ru, cy + Math.sin(a0) * rv, cx + Math.cos(a1) * ru, cy + Math.sin(a1) * rv] as Tri; });
+  const SHAPES: { tris: Tri[]; col: number[] }[] = [
+    { tris: hexagon(0, -0.17, 0.16, 0.14), col: [1, 0.5, 0.1] },                                                   // pumpkin
+    { tris: [[-0.14, 0, 0.14, 0, 0, -0.4]], col: [0.6, 0.32, 0.95] },                                              // purple pennant
+    { tris: [[-0.12, 0, 0.12, 0, 0, -0.14], [-0.12, 0, -0.12, -0.3, 0, -0.14], [0.12, 0, 0.12, -0.3, 0, -0.14], [-0.12, -0.3, -0.06, -0.23, 0, -0.14], [0.12, -0.3, 0.06, -0.23, 0, -0.14], [-0.06, -0.23, 0, -0.3, 0, -0.14], [0.06, -0.23, 0, -0.3, 0, -0.14]], col: [1, 0.96, 1] },   // ghost
+    { tris: [[-0.14, 0, 0.14, 0, 0, -0.4]], col: [1, 0.5, 0.1] },                                                  // orange pennant
+  ];
+  const pos: number[] = [], colr: number[] = [], hang: number[] = [], cum: number[] = [0];
+  for (const pi of order) {
+    const p = pts[pi], sh = SHAPES[pi % SHAPES.length], k0 = 0.8;
+    for (const t of sh.tris) for (let v = 0; v < 3; v++) {
+      const u = t[v * 2], dv = t[v * 2 + 1];
+      pos.push(p.x + p.tx * u, p.y + dv, p.z + p.tz * u);
+      const k = k0 + 0.25 * Math.min(1, -dv / 0.3); colr.push(sh.col[0] * k, sh.col[1] * k, sh.col[2] * k);
+      hang.push(Math.min(1, -dv / 0.3));
+    }
+    cum.push(pos.length / 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3)); g.setAttribute('aHang', new THREE.Float32BufferAttribute(hang, 1));
+  g.userData.cum = cum;
+  g.computeBoundingSphere();
+  return g;
+}

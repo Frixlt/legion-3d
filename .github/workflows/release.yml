@@ -26,3 +26,57 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
             && gh release upload "${GITHUB_REF_NAME}" legion-3d-*.zip --clobber \
             || gh release create "${GITHUB_REF_NAME}" legion-3d-*.zip --title "Legion 3D ${GITHUB_REF_NAME}" --notes-file .github/RELEASE_NOTES.md
+      # First submission and store listing are created manually. These steps update an existing item only.
+      - name: Upload and publish Chrome Web Store update (optional)
+        env:
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          if [[ -z "$CWS_EXTENSION_ID" || -z "$CWS_CLIENT_ID" || -z "$CWS_CLIENT_SECRET" || -z "$CWS_REFRESH_TOKEN" ]]; then
+            echo 'Chrome Web Store secrets missing; skipping.'; exit 0
+          fi
+          set -euo pipefail
+          file="legion-3d-${GITHUB_REF_NAME#v}-store.zip"
+          token=$(curl -fsS --retry 2 https://oauth2.googleapis.com/token \
+            -d grant_type=refresh_token --data-urlencode "client_id=$CWS_CLIENT_ID" \
+            --data-urlencode "client_secret=$CWS_CLIENT_SECRET" \
+            --data-urlencode "refresh_token=$CWS_REFRESH_TOKEN" | jq -er '.access_token')
+          base="https://www.googleapis.com/chromewebstore/v1.1/items/$CWS_EXTENSION_ID"
+          upload=$(curl -fsS --retry 2 -X PUT -H "Authorization: Bearer $token" -H 'x-goog-api-version: 2' \
+            -T "$file" "$base")
+          echo "$upload" | jq -e '.uploadState == "SUCCESS"' >/dev/null
+          publish=$(curl -fsS --retry 2 -X POST -H "Authorization: Bearer $token" -H 'x-goog-api-version: 2' \
+            "$base/publish?publishTarget=default")
+          echo "$publish" | jq -e '.status | index("OK") or index("PUBLISHED_WITH_FRICTION")' >/dev/null
+          echo 'Chrome Web Store update submitted for review.'
+      - name: Upload and submit Edge Add-ons update (optional)
+        env:
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+        run: |
+          if [[ -z "$EDGE_PRODUCT_ID" || -z "$EDGE_CLIENT_ID" || -z "$EDGE_API_KEY" ]]; then
+            echo 'Edge Add-ons secrets missing; skipping.'; exit 0
+          fi
+          set -euo pipefail
+          file="legion-3d-${GITHUB_REF_NAME#v}-store.zip"
+          base="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID/submissions"
+          headers=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
+          # Edge responds 202 while package validation runs. Never submit a draft until validation succeeds.
+          operation=$(curl -fsS -D edge-headers -o /dev/null -X POST "${headers[@]}" \
+            -H 'Content-Type: application/zip' -T "$file" "$base/draft/package"; \
+            awk 'tolower($1)=="location:" {gsub("\r", "", $2); print $2}' edge-headers | tail -1)
+          [[ -n "$operation" ]] || { echo 'Edge upload did not return an operation ID'; exit 1; }
+          succeeded=false
+          for i in {1..20}; do
+            status=$(curl -fsS "${headers[@]}" "$base/draft/package/operations/$operation" | jq -r '.status')
+            if [[ "$status" == Succeeded ]]; then succeeded=true; break; fi
+            if [[ "$status" == Failed ]]; then echo 'Edge package validation failed'; exit 1; fi
+            sleep 15
+          done
+          [[ "$succeeded" == true ]] || { echo 'Edge validation timeout'; exit 1; }
+          curl -fsS -o /dev/null -X POST "${headers[@]}" -H 'Content-Type: text/plain' \
+            --data "Legion 3D ${GITHUB_REF_NAME}" "$base"
+          echo 'Edge Add-ons update submitted for review.'

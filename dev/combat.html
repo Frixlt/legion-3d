@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Legion 3D · combat dev</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #1d1a4a; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; color: #f3ecff; }
+  #app { position: fixed; inset: 0; }
+  #hud { position: fixed; left: 12px; top: 10px; white-space: pre; background: rgba(20, 16, 42, .62); padding: 8px 10px;
+         border-radius: 8px; pointer-events: none; font: 12px/1.45 ui-monospace, monospace; }
+  #vm { position: fixed; right: 12px; bottom: 12px; width: 360px; height: 220px; border: 2px solid #b89be0; border-radius: 10px; overflow: hidden; }
+  #vm canvas { display: block; }
+  #help { position: fixed; right: 12px; top: 10px; background: rgba(20,16,42,.62); padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">…</div>
+<div id="help">ЛКМ — атака (лук: удерживать) · 1–9 оружие · V вид · R сброс · ←/→ поворот</div>
+
+<script src="combat.js"></script>
+</body>
+</html>

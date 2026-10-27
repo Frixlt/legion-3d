@@ -91,6 +91,14 @@ function drawFace(g: CanvasRenderingContext2D, f: FaceKey) {
         g.beginPath(); g.moveTo(x, ey - 4 * u); g.lineTo(x, ey + 4 * u); g.lineWidth = 2.2 * u; g.stroke();
       }
       break;
+    case 'dizzy':   // knocked down (src/combat): spiral eyes
+      g.strokeStyle = ink; g.lineWidth = 1.7 * u;
+      for (const x of xs) {
+        g.beginPath();
+        for (let i = 0; i <= 40; i++) { const a = i * 0.42, r = (0.4 + i * 0.16) * u; const px = x + Math.cos(a) * r, py = ey + Math.sin(a) * r; i ? g.lineTo(px, py) : g.moveTo(px, py); }
+        g.stroke();
+      }
+      break;
     case 'void':
       g.fillStyle = '#120c18'; for (const x of xs) { g.beginPath(); g.ellipse(x, ey, 5.5 * u, 6.5 * u, 0, 0, Math.PI * 2); g.fill(); }
       break;
@@ -135,6 +143,11 @@ function drawFace(g: CanvasRenderingContext2D, f: FaceKey) {
       g.fillStyle = '#ff7f9a'; g.lineWidth = 1.5 * u;
       g.beginPath(); g.moveTo(cx - 2.6 * u, my + 1 * u); g.quadraticCurveTo(cx, my + 9 * u, cx + 2.6 * u, my + 1 * u); g.closePath(); g.fill(); g.stroke();
       g.lineWidth = 2.3 * u; omega(6.5 * u);
+      break;
+    case 'wobble':   // dizzy: a wavy little mouth
+      g.beginPath(); g.moveTo(cx - 8 * u, my + 2 * u);
+      for (let i = 1; i <= 8; i++) g.lineTo(cx - 8 * u + i * 2 * u, my + 2 * u + (i % 2 ? -1.6 : 1.6) * u);
+      g.stroke();
       break;
     case 'none': break;
     default: {   // open

@@ -9,15 +9,17 @@ import type { Appearance } from '../contracts';
 import { RARITY_COLOR, nickExtras } from './appearance';
 import { setDetail, Parts, T, mul, bodyDims, bodyShell, radiusAt, sectionXZ, col, sphere, cyl, cone, capsule, torus, star, slab, tube, INK, type BodyDims, type Skin } from './geom';
 import { addHat, addAccessories } from './hats';
-import { addWeapon, addShield, weaponHold } from './gear';
+import { addWeapon, addShield, weaponHold, bladeSpan, BOW_STRING } from './gear';
 
 /** Third-person forward tilt of the weapon hand (rx; default −0.65 = tip up-forward). */
 const TP_TILT: Record<string, number> = { censer: 0, bow: -0.12, staff: -0.25, crook: -0.25, skullstaff: -0.25, spear: -0.9, pitchfork: -0.9, grimoire: -0.2 };
 import { addArmor, armorBase, SHROUD, W_CLOTH, RANK } from './armor';
 
-export const enum B { root = 0, body = 1, armL = 2, armR = 3, legL = 4, legR = 5, tail1 = 6, tail2 = 7, cape1 = 8, cape2 = 9 }
-export const BONE_COUNT = 10;
-export const BONE_PARENT = [-1, 0, 1, 1, 0, 0, 1, 6, 1, 8];
+/** wrist: the weapon paw (child of armR, at the paw); the held weapon is skinned to it so it can turn on its own (bow draw). */
+/** bowString: the bow string (child of wrist, at the string centre); collapsed while the TP draw overlay shows a pulled string. */
+export const enum B { root = 0, body = 1, armL = 2, armR = 3, legL = 4, legR = 5, tail1 = 6, tail2 = 7, cape1 = 8, cape2 = 9, wrist = 10, bowString = 11 }
+export const BONE_COUNT = 12;
+export const BONE_PARENT = [-1, 0, 1, 1, 0, 0, 1, 6, 1, 8, 3, 10];
 
 export interface Rig {
   /** Rest positions of the bones in model space. */
@@ -38,6 +40,10 @@ export interface ModelData {
   hasLegs: boolean; hasTail: boolean; hasCape: boolean;
   radius: number;
   refs: number;
+  /** Swing trail (src/combat): the striking edge in MODEL space (bind pose) and the bone it hangs on; null = none. */
+  blade: { bone: number; a: THREE.Vector3; b: THREE.Vector3 } | null;
+  /** Bow (TP draw overlay): string ends and the grip in MODEL space (bind pose); null = no bow. */
+  bow: { top: THREE.Vector3; bottom: THREE.Vector3; grip: THREE.Vector3 } | null;
 }
 
 const W_GEM: Record<string, string> = { gold: '#ffd76a', sparks: '#fff0a8', halo: '#ffe27a', shadow: '#a24bff', frost: '#8fd4ff', plain: '#d9a441' };
@@ -160,6 +166,8 @@ function buildModel(app: Appearance, key: string): ModelData {
   /* ---- arms & paws ---- */
   const armLen = d.shape === 'ball' ? 0.15 : 0.175;
   const handL = new THREE.Vector3(-0.085, -armLen, -0.03), handR = new THREE.Vector3(0.085, -armLen, -0.03);
+  rest.push(new THREE.Vector3().copy(rest[B.armR]).add(handR));   // B.wrist
+  rest.push(rest[B.wrist].clone());                                // B.bowString (moved to the string centre below)
   const sleeve = g.a && g.a !== 'robe' && g.a !== 'shroud' ? null : g.a ? (g.a === 'robe' ? W_CLOTH[g.ar || 'common'] : SHROUD[rk]) : null;
   for (const s of [-1, 1]) {
     const bone = s < 0 ? B.armL : B.armR, r = rest[bone], hand = s < 0 ? handL : handR;
@@ -170,14 +178,31 @@ function buildModel(app: Appearance, key: string): ModelData {
     if (cat) for (const k of [-1, 1]) p.add(sphere(0.012, 5, 4), '#ff8fa3', T(r.x + hand.x + k * 0.016, r.y + hand.y - 0.03, r.z + hand.z - 0.035));
   }
   /* ---- weapon & shield ---- */
+  let blade: ModelData['blade'] = null;
+  let bow: ModelData['bow'] = null;
   if (g.w) {
     const r = rest[B.armR];
     // hand pose (tip up-forward; staffs nearly upright; spears levelled forward; bow upright; censer hanging), then the
     // canonical hold (gear.ts weaponHold: edge / head forward, bow string and grimoire cover towards the holder)
     const w = g.w, tilt = TP_TILT[w] ?? -0.65;
     const m = new THREE.Matrix4().multiplyMatrices(T(r.x + handR.x, r.y + handR.y, r.z + handR.z, tilt, 0, w === 'censer' ? 0 : -0.15), weaponHold(w));
-    p.bone = B.armR;
-    addWeapon(p, w, g.wr, m);
+    p.bone = B.wrist;
+    addWeapon(p, w, g.wr, m, false, w === 'bow' ? B.bowString : undefined);
+    if (w === 'bow') {
+      const sc = BOW_STRING;
+      rest[B.bowString].set((sc.top[0] + sc.bottom[0]) / 2, (sc.top[1] + sc.bottom[1]) / 2, (sc.top[2] + sc.bottom[2]) / 2).applyMatrix4(m);
+      bow = {
+        top: new THREE.Vector3(...sc.top).applyMatrix4(m), bottom: new THREE.Vector3(...sc.bottom).applyMatrix4(m),
+        grip: new THREE.Vector3(...sc.grip).applyMatrix4(m),
+      };
+    }
+    const span = bladeSpan(w);
+    if (span) blade = { bone: B.wrist, a: new THREE.Vector3(0, span[0], 0).applyMatrix4(m), b: new THREE.Vector3(0, span[1], 0).applyMatrix4(m) };
+  } else {
+    // bare paw (slap): a short streak along the forearm through the paw
+    const r = rest[B.armR], dir = handR.clone().normalize();
+    const hand = new THREE.Vector3().copy(r).add(handR);
+    blade = { bone: B.armR, a: hand.clone().addScaledVector(dir, -0.05), b: hand.clone().addScaledVector(dir, 0.07) };
   }
   if (g.s) {
     const r = rest[B.armL];
@@ -327,7 +352,7 @@ function buildModel(app: Appearance, key: string): ModelData {
   const faceKey = [l.eyes, l.mouth, l.blush ? 1 : 0, ex.iris, style, d.narrow ? 1 : 0, app.ghost ? 1 : 0].join('|');
   return {
     key, geo, mid: geo, low, rig: { rest, handL, handR }, dims: d, headTop: d.top + Math.max(0, hatH) + (cat && hatH < 0.12 ? 0.1 : 0),
-    faceKey, hasLegs, hasTail, hasCape, radius: Math.max(0.9, geo.boundingSphere!.radius + 0.4), refs: 0,
+    faceKey, hasLegs, hasTail, hasCape, radius: Math.max(0.9, geo.boundingSphere!.radius + 0.4), refs: 0, blade, bow,
   };
 }
 

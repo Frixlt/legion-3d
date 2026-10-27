@@ -4,6 +4,8 @@ import { createInteractSystem } from '../src/core/interact';
 import { createRoomManager, type RoomHost } from '../src/core/rooms';
 import { createRegistries } from '../src/core/registries';
 import { doorBox } from '../src/features/doors';
+import { outlineOwner, outlineSources } from '../src/engine/outline';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Building } from '../src/contracts';
 import type { RoomScene } from '../src/contracts/ext';
 
@@ -102,7 +104,7 @@ describe('InteractSystem', () => {
     expect(s.size).toBe(0);
   });
 
-  it('highlights exactly one target: own highlight() hook, a shell over visible meshes, or a frame on a Box3', () => {
+  it('outlines exactly one target: own highlight() hook, the visible meshes of a hit, or a fitted proxy for a Box3 — no frames, no shells', () => {
     const scene = new THREE.Scene();
     const s = createInteractSystem({ scene });
     const calls: boolean[] = [];
@@ -111,25 +113,34 @@ describe('InteractSystem', () => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.6, 2, 0.3), new THREE.MeshBasicMaterial());
     mesh.position.set(2, 1, -1.15); scene.add(mesh); mesh.updateMatrixWorld(true);
     s.add({ id: 'mesh', label: 'm', hit: mesh, proximity: false, use() {} });
+    // a "door" baked into a big static mesh: its leaf (inside the Box3) + a wall (much larger, never taken)
+    const leaf = new THREE.BoxGeometry(0.5, 1.6, 0.06).translate(4, 0.9, -1.15);
+    const wall = new THREE.BoxGeometry(6, 4, 0.2).translate(4, 2, -1.4);
+    const merged = new THREE.Mesh(mergeGeometries([leaf.toNonIndexed(), wall.toNonIndexed()]), new THREE.MeshBasicMaterial());
+    scene.add(merged); merged.updateMatrixWorld(true);
     s.add({ id: 'box', label: 'b', hit: new THREE.Box3(new THREE.Vector3(3.7, 0, -1.3), new THREE.Vector3(4.3, 2, -1)), proximity: false, use() {} });
-    const frameIn = () => scene.children.some((o) => o.name === 'l3d:highlight-frame');
-    const shellIn = () => mesh.children.some((o) => o.name === 'l3d:highlight');
+    const noJunk = () => { let n = 0; scene.traverse((o) => { if (/highlight/.test(o.name)) n++; }); return n === 0 && mesh.children.length === 0; };
     s.update(cam(0, 1, 0), feet(0, 1));
     expect(s.target?.id).toBe('hook');
     expect(calls).toEqual([true]);
-    expect(frameIn() || shellIn()).toBe(false);          // the hook draws its own
+    expect(outlineSources().length).toBe(0);           // the hook draws its own
     s.update(cam(2, 1, 0), feet(2, 1));
     expect(s.target?.id).toBe('mesh');
     expect(calls).toEqual([true, false]);
-    expect(shellIn()).toBe(true);
-    expect(frameIn()).toBe(false);
+    expect(outlineSources()).toEqual([mesh]);
     s.update(cam(4, 1, 0), feet(4, 1));
     expect(s.target?.id).toBe('box');
-    expect(shellIn()).toBe(false);
-    expect(frameIn()).toBe(true);
+    expect(outlineSources().length).toBe(1);
+    const proxy = outlineSources()[0];
+    proxy.geometry.computeBoundingBox();
+    const pb = proxy.geometry.boundingBox!;
+    expect(pb.min.x).toBeCloseTo(3.75); expect(pb.max.x).toBeCloseTo(4.25);   // the leaf only, not the wall
+    expect(pb.max.y).toBeCloseTo(1.7);
+    expect(noJunk()).toBe(true);
     s.update(cam(4, 1, Math.PI), feet(4, 1));          // look away (proximity:false) → nothing lit
     expect(s.target).toBeNull();
-    expect(frameIn()).toBe(false);
+    expect(outlineSources().length).toBe(0);
+    expect(outlineOwner()).toBeNull();
   });
 
   it('doorBox covers the facade around the door and reaches towards the walkable door point', () => {

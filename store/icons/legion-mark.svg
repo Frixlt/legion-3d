@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Legion 3D: lantern cat">
+<defs>
+ <linearGradient id="night" x2=".95" y2="1"><stop stop-color="#26344e"/><stop offset="1" stop-color="#111727"/></linearGradient>
+ <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffdb8d"/><stop offset=".48" stop-color="#eb9e42"/><stop offset="1" stop-color="#ac653a"/></linearGradient>
+ <linearGradient id="lamp" x2=".7" y2="1"><stop stop-color="#fff2bc"/><stop offset="1" stop-color="#e99b42"/></linearGradient>
+ <filter id="glow"><feGaussianBlur stdDeviation="14"/></filter>
+</defs>
+<rect x="5" y="5" width="290" height="290" rx="67" fill="url(#night)"/>
+<path d="M 44 158 L 49 69 Q 49 53 63 60 L 99 80 Q 150 62 201 80 L 237 60 Q 251 53 251 69 L 256 158 Q 256 248 150 252 Q 44 248 44 158Z" fill="#101726" stroke="#e6ae69" stroke-width="7" stroke-linejoin="round"/>
+<path d="M68 99 L70 76 L89 90Z M232 99 L230 76 L211 90Z" fill="#c47755"/>
+<ellipse cx="150" cy="169" rx="85" ry="77" fill="#e99a48" opacity=".18" filter="url(#glow)"/>
+<path d="M150 100 L206 130 L150 160 L94 130Z" fill="#ffdfa0"/>
+<path d="M94 130 L150 160 L150 219 L94 188Z" fill="#ca7740"/>
+<path d="M206 130 L150 160 L150 219 L206 188Z" fill="url(#gold)"/>
+<path d="M150 160 V219 M94 130 L150 160 L206 130 M94 188 L150 219 L206 188" fill="none" stroke="#fff0b8" stroke-width="5" stroke-linejoin="round"/>
+<path d="M110 136 L150 114 L190 136 L150 157Z" fill="url(#lamp)"/>
+<path d="M110 136 L150 157 L150 204 L110 182Z" fill="#f4a955"/>
+<path d="M190 136 L150 157 L150 204 L190 182Z" fill="#f7c777"/>
+<path d="M150 157 V205 M110 136 L150 157 L190 136" fill="none" stroke="#604450" stroke-width="5"/>
+<path d="M61 190 Q61 240 112 252 M239 190 Q239 240 188 252" stroke="#db9c5e" opacity=".35" stroke-width="5" fill="none"/>
+<circle cx="73" cy="130" r="4" fill="#fbd392"/><circle cx="227" cy="130" r="4" fill="#fbd392"/>
+</svg>

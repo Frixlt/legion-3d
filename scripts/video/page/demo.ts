@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import type { G } from './kit';
 
 export const HERO_NAME = 'Пушок';
+export const MINER_NAMES = ['Шахтёр Кузя', 'Кирочка', 'Грифель', 'Кремешок', 'Уголёк', 'Мята', 'Пломбир', 'Сухарик', 'Бублик', 'Ириска', 'Шпрот', 'Тапок'];
 export const BOT_NAMES = ['Мурка', 'Барсик', 'Рыжик', 'Снежка', 'Тиша', 'Дымок', 'Маркиза', 'Персик', 'Уголёк', 'Луна',
   'Кекс', 'Пломбир', 'Мята', 'Тимофей', 'Ириска', 'Филя', 'Соня', 'Шнурок', 'Ватрушка', 'Бублик', 'Злата', 'Пряник', 'Муся', 'Граф'];
 
@@ -104,7 +105,18 @@ export function enableMine(G: G, digSec = 2.5): void {
   const bus = makeBus();
   (window as any).__L3D_BUS = bus;
   const hero = G.store.hero;
-  fakeMine = new FakeMine({ login: String(hero.login), enter: structuredClone(mineEnter as any), hero, bus, digSec, bots: true });
+  // camera-ready names for the fixture miners (fixtures use playerN / botN placeholders): only the shown name `n`
+  const cute = new Map<string, string>();
+  const nameOf = (l: string) => { if (!cute.has(l)) cute.set(l, MINER_NAMES[cute.size % MINER_NAMES.length]); return cute.get(l)!; };
+  const renameN = (o: any): any => {
+    if (Array.isArray(o)) return o.map(renameN);
+    if (o && typeof o === 'object') { for (const k of Object.keys(o)) { const v = o[k]; o[k] = k === 'n' && typeof v === 'string' && /^(player|bot)\d+$/.test(v) ? nameOf(v) : renameN(v); } }
+    return o;
+  };
+  const emit0 = bus.emit.bind(bus);
+  bus.emit = (type: string, d: any) => emit0(type, type === 'sse:mine' ? renameN(d) : d);
+  fakeMine = new FakeMine({ login: String(hero.login), enter: renameN(structuredClone(mineEnter as any)), hero, bus, digSec, bots: true });
+  { const api0 = fakeMine.api.bind(fakeMine); (fakeMine as any).api = async (p: string, b?: any) => renameN(await api0(p, b)); }
   // fresh stones: nobody is digging yet, so ours breaks in digSec seconds on camera
   (fakeMine.st as any).bl = {}; (fakeMine.st as any).dg = {};
   bus.on('sse:me', (d: any) => { if (d && d.hero) G.store.setHero(d.hero); });
